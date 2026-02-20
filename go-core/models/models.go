@@ -27,14 +27,18 @@ type Photo struct {
 
 type ExifData struct {
 	gorm.Model
-	PhotoID      uint
-	CameraModel  string
-	LensModel    string
-	FocalLength  string
-	Aperture     string
-	ShutterSpeed string
-	ISO          string
-	ColorSpace   string // e.g., sRGB, Adobe RGB, Display P3
+	PhotoID          uint
+	CameraModel      string
+	LensModel        string
+	FocalLength      string
+	Aperture         string
+	ShutterSpeed     string
+	ISO              string
+	ColorSpace       string // e.g., sRGB, Adobe RGB, Display P3
+	GPSLatitude      string
+	GPSLongitude     string
+	Software         string
+	DateTimeOriginal string
 }
 
 type FeatureFlag struct {

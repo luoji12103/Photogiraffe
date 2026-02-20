@@ -8,6 +8,7 @@ from PIL import Image
 import redis
 from minio import Minio
 from pillow_heif import register_heif_opener
+import exifread
 
 register_heif_opener()
 
@@ -58,6 +59,52 @@ def process_image(minio_client, photo_id, minio_path):
         logger.info(f"Processing image {photo_id}...")
         img = Image.open(BytesIO(img_data))
         
+        # Extract EXIF data using exifread
+        exif_data = {}
+        try:
+            tags = {}
+            # Try parsing directly from file data (works for JPEG, TIFF, RAW)
+            try:
+                tags = exifread.process_file(BytesIO(img_data), details=False)
+                logger.info(f"Tags from direct parse: {len(tags)}")
+            except Exception as e:
+                logger.info(f"Direct parse failed or returned empty: {e}")
+            
+            logger.info(f"Pillow info keys: {list(img.info.keys())}")
+            
+            # If no tags found, try extracting from Pillow's info (works for HEIF/HIF)
+            if not tags and 'exif' in img.info:
+                logger.info("Trying to parse EXIF from Pillow info...")
+                exif_bytes = img.info['exif']
+                if isinstance(exif_bytes, bytes):
+                    if exif_bytes.startswith(b'Exif\x00\x00'):
+                        exif_bytes = exif_bytes[6:]
+                    tags = exifread.process_file(BytesIO(exif_bytes), details=False)
+                    logger.info(f"Tags from Pillow info: {len(tags)}")
+
+            def get_tag(key):
+                return str(tags[key]) if key in tags else ""
+
+            if tags:
+                exif_data = {
+                    "CameraModel": get_tag("Image Model"),
+                    "LensModel": get_tag("EXIF LensModel"),
+                    "FocalLength": get_tag("EXIF FocalLength"),
+                    "Aperture": get_tag("EXIF FNumber"),
+                    "ShutterSpeed": get_tag("EXIF ExposureTime"),
+                    "ISO": get_tag("EXIF ISOSpeedRatings"),
+                    "ColorSpace": get_tag("EXIF ColorSpace"),
+                    "GPSLatitude": get_tag("GPS GPSLatitude"),
+                    "GPSLongitude": get_tag("GPS GPSLongitude"),
+                    "Software": get_tag("Image Software"),
+                    "DateTimeOriginal": get_tag("EXIF DateTimeOriginal")
+                }
+                logger.info(f"Extracted EXIF data: {exif_data}")
+            else:
+                logger.info("No EXIF tags found in the image.")
+        except Exception as e:
+            logger.warning(f"Failed to extract EXIF data: {e}")
+
         # Convert to RGB if necessary (e.g., RGBA or CMYK)
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -92,7 +139,10 @@ def process_image(minio_client, photo_id, minio_path):
         # 4. Update status in Go Core API
         logger.info(f"Updating status for photo {photo_id} to completed...")
         update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/status"
-        res = requests.put(update_url, json={"status": "completed"})
+        payload = {"status": "completed"}
+        if exif_data:
+            payload["exif_data"] = exif_data
+        res = requests.put(update_url, json=payload)
         res.raise_for_status()
 
         logger.info(f"Successfully processed photo {photo_id}")

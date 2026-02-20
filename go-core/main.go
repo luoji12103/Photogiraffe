@@ -132,7 +132,8 @@ func main() {
 		id := c.Params("id")
 		
 		type StatusUpdate struct {
-			Status string `json:"status"`
+			Status   string           `json:"status"`
+			ExifData *models.ExifData `json:"exif_data,omitempty"`
 		}
 		
 		var update StatusUpdate
@@ -140,12 +141,23 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
+		// Update photo status
 		result := database.DB.Model(&models.Photo{}).Where("id = ?", id).Update("status", update.Status)
 		if result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update status"})
 		}
 		if result.RowsAffected == 0 {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		// Save EXIF data if provided
+		if update.ExifData != nil {
+			var photoID uint
+			database.DB.Model(&models.Photo{}).Where("id = ?", id).Select("id").Scan(&photoID)
+			if photoID > 0 {
+				update.ExifData.PhotoID = photoID
+				database.DB.Create(update.ExifData)
+			}
 		}
 
 		return c.JSON(fiber.Map{"message": "Status updated successfully"})

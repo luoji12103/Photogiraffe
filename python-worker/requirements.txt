@@ -3,3 +3,4 @@ minio
 pillow
 requests
 pillow-heif
+exifread
