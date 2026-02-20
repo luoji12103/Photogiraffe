@@ -26,13 +26,29 @@ func main() {
 	}
 	fmt.Println("Database migration completed successfully.")
 
+	// Create a dummy user for testing
+	var count int64
+	database.DB.Model(&models.User{}).Count(&count)
+	if count == 0 {
+		dummyUser := models.User{
+			Username:     "testuser",
+			Email:        "test@example.com",
+			PasswordHash: "dummyhash",
+			Role:         "admin",
+		}
+		database.DB.Create(&dummyUser)
+		fmt.Println("Created dummy user for testing.")
+	}
+
 	// Initialize MinIO Client
 	storage.InitMinio()
 
 	// Initialize Redis Client
 	queue.InitRedis()
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
+	})
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		// Check DB connection
@@ -102,6 +118,30 @@ func main() {
 			"photo_id": photo.ID,
 			"path":     objectName,
 		})
+	})
+
+	// Internal API for Python Worker to update photo status
+	app.Put("/internal/photos/:id/status", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		
+		type StatusUpdate struct {
+			Status string `json:"status"`
+		}
+		
+		var update StatusUpdate
+		if err := c.BodyParser(&update); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		result := database.DB.Model(&models.Photo{}).Where("id = ?", id).Update("status", update.Status)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update status"})
+		}
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		return c.JSON(fiber.Map{"message": "Status updated successfully"})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

@@ -1,3 +1,5 @@
 redis
 minio
 pillow
+requests
+pillow-heif
