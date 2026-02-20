@@ -11,6 +11,7 @@ import (
 	"photogiraffe/core/storage"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 )
@@ -49,6 +50,12 @@ func main() {
 	app := fiber.New(fiber.Config{
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
+
+	// Enable CORS
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept",
+	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		// Check DB connection
@@ -142,6 +149,16 @@ func main() {
 		}
 
 		return c.JSON(fiber.Map{"message": "Status updated successfully"})
+	})
+
+	// API to get list of photos
+	app.Get("/photos", func(c *fiber.Ctx) error {
+		var photos []models.Photo
+		result := database.DB.Order("uploaded_at desc").Find(&photos)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
+		}
+		return c.JSON(photos)
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

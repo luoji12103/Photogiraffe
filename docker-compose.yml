@@ -75,6 +75,19 @@ services:
       - minio
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+    container_name: photogiraffe-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
+    depends_on:
+      - go-core
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
