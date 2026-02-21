@@ -51,7 +51,6 @@ export default async function PhotoModalPage({
     notFound();
   }
 
-  const minioUrl = process.env.NEXT_PUBLIC_MINIO_URL || "http://localhost:9000";
-
+  // B6 fix: minioUrl was declared but PhotoDetail uses /api/image proxy directly.
   return <PhotoDetail photo={photo} />;
 }

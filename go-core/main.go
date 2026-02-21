@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,13 +59,6 @@ func main() {
 	// Initialize Database Connection
 	database.Connect()
 
-	// Auto Migrate Models
-	err := database.DB.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{})
-	if err != nil {
-		log.Fatal("Failed to auto migrate database: ", err)
-	}
-	fmt.Println("Database migration completed successfully.")
-
 	// Create a dummy user for testing
 	var count int64
 	database.DB.Model(&models.User{}).Count(&count)
@@ -78,6 +72,9 @@ func main() {
 		database.DB.Create(&dummyUser)
 		fmt.Println("Created dummy user for testing.")
 	}
+
+	// Note: AutoMigrate is already performed inside database.Connect().
+	// The duplicate call below is intentionally removed (B2 fix).
 
 	// Initialize MinIO Client
 	storage.InitMinio()
@@ -112,10 +109,11 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Failed to get image from form"})
 		}
 
-		// Generate a unique filename
-		ext := ".jpg" // Default extension, should be extracted from original filename
-		if len(file.Filename) > 4 {
-			ext = file.Filename[len(file.Filename)-4:]
+		// Generate a unique filename — use filepath.Ext to correctly handle
+		// extensions of any length (e.g. .jpeg, .tiff, .webp). (B1 fix)
+		ext := filepath.Ext(file.Filename)
+		if ext == "" {
+			ext = ".jpg"
 		}
 		uniqueFilename := uuid.New().String() + ext
 		bucketName := "photos"
@@ -189,13 +187,24 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
 
-		// Save EXIF data if provided
+		// Save EXIF data if provided — use FirstOrCreate to prevent duplicate
+		// rows accumulating when the worker retries. (B3 fix)
 		if update.ExifData != nil {
 			var photoID uint
 			database.DB.Model(&models.Photo{}).Where("id = ?", id).Select("id").Scan(&photoID)
 			if photoID > 0 {
-				update.ExifData.PhotoID = photoID
-				database.DB.Create(update.ExifData)
+				var existing models.ExifData
+				result := database.DB.Where("photo_id = ?", photoID).First(&existing)
+				if result.Error != nil {
+					// No existing record — create fresh
+					update.ExifData.PhotoID = photoID
+					database.DB.Create(update.ExifData)
+				} else {
+					// Update in-place to avoid duplicates
+					update.ExifData.Model = existing.Model
+					update.ExifData.PhotoID = photoID
+					database.DB.Save(update.ExifData)
+				}
 			}
 		}
 
@@ -277,6 +286,11 @@ func main() {
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
+		// B4 fix: only allow AI analysis on successfully processed photos;
+		// otherwise the worker would fail because the proxy image doesn't exist.
+		if photo.Status != "completed" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet. Please wait for the photo to finish processing before running AI analysis."})
+		}
 
 		var config models.AIConfig
 		configResult := database.DB.First(&config)
@@ -321,7 +335,7 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
 
-		photo.AIAnalysis = input.Analysis
+		photo.AIAnalysis = &input.Analysis // B7 fix: *string so gorm writes NULL for unset fields
 		database.DB.Save(&photo)
 
 		return c.JSON(fiber.Map{"message": "AI analysis updated successfully"})

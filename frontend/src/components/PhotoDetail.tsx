@@ -34,7 +34,7 @@ interface Photo {
   Status: string;
   UploadedAt: string;
   ExifData?: ExifData;
-  AIAnalysis?: string;
+  AIAnalysis?: string | null; // null when AI analysis not yet performed
 }
 
 interface PhotoDetailProps {
@@ -98,13 +98,18 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
         }
       }, 3000);
       
-      // Timeout after 60 seconds
+      // Timeout after 60 seconds.
+      // B5 fix: use functional setState to read the *current* value of
+      // isAnalyzing instead of the stale closure value (which is always false).
       setTimeout(() => {
         clearInterval(pollInterval);
-        if (isAnalyzing) {
-          setIsAnalyzing(false);
-          setAnalysisError("Analysis timed out. Please try again later.");
-        }
+        setIsAnalyzing((wasAnalyzing) => {
+          if (wasAnalyzing) {
+            setAnalysisError("Analysis timed out. Please try again later.");
+            return false;
+          }
+          return wasAnalyzing;
+        });
       }, 60000);
       
     } catch (error: any) {

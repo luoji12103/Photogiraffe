@@ -14,7 +14,6 @@ interface Photo {
 
 interface PhotoGridProps {
   photos: Photo[];
-  minioUrl?: string;
 }
 
 export default function PhotoGrid({ photos }: PhotoGridProps) {

@@ -23,7 +23,7 @@ type Photo struct {
 	Status           string `gorm:"default:'processing'"` // e.g., processing, completed, failed
 	UploadedAt       time.Time
 	ExifData         ExifData
-	AIAnalysis       string `gorm:"type:jsonb"`
+	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 }
 
 type ExifData struct {

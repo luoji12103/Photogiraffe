@@ -25,7 +25,6 @@ async function getPhotos(): Promise<Photo[]> {
 
 export default async function Home() {
   const photos = await getPhotos();
-  const minioUrl = process.env.NEXT_PUBLIC_MINIO_URL || "http://localhost:9000";
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans p-8">
@@ -40,7 +39,8 @@ export default async function Home() {
       </header>
 
       <main>
-        <PhotoGrid photos={photos} minioUrl={minioUrl} />
+        {/* B6 fix: removed unused minioUrl prop */}
+        <PhotoGrid photos={photos} />
       </main>
     </div>
   );
