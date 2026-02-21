@@ -9,6 +9,7 @@ import redis
 from minio import Minio
 from pillow_heif import register_heif_opener
 import exifread
+import rawpy
 
 register_heif_opener()
 
@@ -55,9 +56,22 @@ def process_image(minio_client, photo_id, minio_path):
         response.close()
         response.release_conn()
 
-        # 2. Process image with Pillow
+        # 2. Process image with Pillow or rawpy
         logger.info(f"Processing image {photo_id}...")
-        img = Image.open(BytesIO(img_data))
+        
+        is_raw = minio_path.lower().endswith(('.arw', '.cr2', '.nef', '.dng', '.raf'))
+        
+        if is_raw:
+            logger.info("Detected RAW image, processing with rawpy...")
+            try:
+                with rawpy.imread(BytesIO(img_data)) as raw:
+                    rgb = raw.postprocess(use_camera_wb=True, half_size=True)
+                img = Image.fromarray(rgb)
+            except Exception as e:
+                logger.error(f"Failed to process RAW image with rawpy: {e}")
+                raise e
+        else:
+            img = Image.open(BytesIO(img_data))
         
         # Extract EXIF data using exifread
         exif_data = {}
@@ -70,10 +84,11 @@ def process_image(minio_client, photo_id, minio_path):
             except Exception as e:
                 logger.info(f"Direct parse failed or returned empty: {e}")
             
-            logger.info(f"Pillow info keys: {list(img.info.keys())}")
+            if not is_raw:
+                logger.info(f"Pillow info keys: {list(img.info.keys())}")
             
             # If no tags found, try extracting from Pillow's info (works for HEIF/HIF)
-            if not tags and 'exif' in img.info:
+            if not tags and not is_raw and 'exif' in img.info:
                 logger.info("Trying to parse EXIF from Pillow info...")
                 exif_bytes = img.info['exif']
                 if isinstance(exif_bytes, bytes):

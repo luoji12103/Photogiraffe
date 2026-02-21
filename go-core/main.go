@@ -130,12 +130,12 @@ func main() {
 	// Internal API for Python Worker to update photo status
 	app.Put("/internal/photos/:id/status", func(c *fiber.Ctx) error {
 		id := c.Params("id")
-		
+
 		type StatusUpdate struct {
 			Status   string           `json:"status"`
 			ExifData *models.ExifData `json:"exif_data,omitempty"`
 		}
-		
+
 		var update StatusUpdate
 		if err := c.BodyParser(&update); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
@@ -166,11 +166,22 @@ func main() {
 	// API to get list of photos
 	app.Get("/photos", func(c *fiber.Ctx) error {
 		var photos []models.Photo
-		result := database.DB.Order("uploaded_at desc").Find(&photos)
+		result := database.DB.Preload("ExifData").Order("uploaded_at desc").Find(&photos)
 		if result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
 		}
 		return c.JSON(photos)
+	})
+
+	// API to get a single photo by ID
+	app.Get("/photos/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var photo models.Photo
+		result := database.DB.Preload("ExifData").First(&photo, id)
+		if result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		return c.JSON(photo)
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

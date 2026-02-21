@@ -84,6 +84,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
+      - INTERNAL_API_URL=http://go-core:8080
     depends_on:
       - go-core
     restart: unless-stopped

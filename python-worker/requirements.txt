@@ -4,3 +4,4 @@ pillow
 requests
 pillow-heif
 exifread
+rawpy
