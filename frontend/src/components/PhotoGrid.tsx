@@ -14,10 +14,10 @@ interface Photo {
 
 interface PhotoGridProps {
   photos: Photo[];
-  minioUrl: string;
+  minioUrl?: string;
 }
 
-export default function PhotoGrid({ photos, minioUrl }: PhotoGridProps) {
+export default function PhotoGrid({ photos }: PhotoGridProps) {
   if (photos.length === 0) {
     return (
       <div className="text-center py-20 text-zinc-500">
@@ -30,7 +30,7 @@ export default function PhotoGrid({ photos, minioUrl }: PhotoGridProps) {
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
       {photos.map((photo) => {
         const thumbPath = photo.MinioPath.replace("raw/", "thumb/").replace(/\.[^/.]+$/, ".webp");
-        const imageUrl = `${minioUrl}/photos/${thumbPath}`;
+        const imageUrl = `/api/image?path=${encodeURIComponent(thumbPath)}`;
 
         return (
           <Link href={`/photo/${photo.ID}`} key={photo.ID} scroll={false} className="block">
@@ -57,7 +57,7 @@ export default function PhotoGrid({ photos, minioUrl }: PhotoGridProps) {
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-4 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
                 <p className="text-sm font-medium text-white truncate">{photo.OriginalFilename}</p>
-                <p className="text-xs text-zinc-300">{new Date(photo.UploadedAt).toLocaleDateString()}</p>
+                <p className="text-xs text-zinc-300" suppressHydrationWarning>{new Date(photo.UploadedAt).toLocaleDateString()}</p>
               </div>
             </motion.div>
           </Link>

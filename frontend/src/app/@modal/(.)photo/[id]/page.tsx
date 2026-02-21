@@ -53,5 +53,5 @@ export default async function PhotoModalPage({
 
   const minioUrl = process.env.NEXT_PUBLIC_MINIO_URL || "http://localhost:9000";
 
-  return <PhotoDetail photo={photo} minioUrl={minioUrl} />;
+  return <PhotoDetail photo={photo} />;
 }

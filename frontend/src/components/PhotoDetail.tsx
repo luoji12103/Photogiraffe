@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { X, Camera, Aperture, Clock, Zap, MapPin, Calendar, Sparkles, Loader2 } from "lucide-react";
@@ -39,17 +39,27 @@ interface Photo {
 
 interface PhotoDetailProps {
   photo: Photo;
-  minioUrl: string;
 }
 
-export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDetailProps) {
+export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
+  const router = useRouter();
   const [photo, setPhoto] = useState<Photo>(initialPhoto);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
 
-  // Use the proxy image for the detail view
+  const handleClose = () => {
+    // router.back() closes the intercepting modal and returns to gallery;
+    // if opened directly (no history), fall back to the home page.
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/");
+    }
+  };
+
+  // Use the proxy image for the detail view (route through Next.js API to avoid CORS/port issues)
   const proxyPath = photo.MinioPath.replace("raw/", "proxy/").replace(/\.[^/.]+$/, ".webp");
-  const imageUrl = `${minioUrl}/photos/${proxyPath}`;
+  const imageUrl = `/api/image?path=${encodeURIComponent(proxyPath)}`;
 
   const exif = photo.ExifData;
   
@@ -105,13 +115,13 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
-      <Link 
-        href="/" 
-        scroll={false}
+      <button
+        onClick={handleClose}
         className="absolute top-6 right-6 z-50 p-2 text-white/70 hover:text-white transition-colors bg-black/20 rounded-full hover:bg-black/40"
+        aria-label="Close"
       >
         <X size={24} />
-      </Link>
+      </button>
 
       <div className="w-full h-full flex flex-col md:flex-row">
         {/* Image Section */}
@@ -209,8 +219,8 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
                 {exif.DateTimeOriginal && (
                   <div className="flex items-center gap-3">
                     <Calendar className="w-4 h-4 text-zinc-400" />
-                    <p className="text-sm text-zinc-300">
-                      {new Date(exif.DateTimeOriginal.replace(/:/, '-').replace(/:/, '-')).toLocaleString()}
+                    <p className="text-sm text-zinc-300" suppressHydrationWarning>
+                      {new Date(exif.DateTimeOriginal.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')).toLocaleString()}
                     </p>
                   </div>
                 )}

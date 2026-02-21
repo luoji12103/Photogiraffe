@@ -8,7 +8,7 @@ export async function GET(
   const internalApiUrl = process.env.INTERNAL_API_URL || "http://go-core:8080";
 
   try {
-    const res = await fetch(`${internalApiUrl}/api/photos/${id}`, {
+    const res = await fetch(`${internalApiUrl}/photos/${id}`, {
       cache: "no-store",
     });
 

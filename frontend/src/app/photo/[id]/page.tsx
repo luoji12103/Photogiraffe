@@ -55,7 +55,7 @@ export default async function PhotoPage({
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <PhotoDetail photo={photo} minioUrl={minioUrl} />
+      <PhotoDetail photo={photo} />
     </div>
   );
 }

@@ -32,7 +32,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-admin12345}
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
       - "9001:9001"
     volumes:
       - miniodata:/data
@@ -87,6 +86,9 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
       - INTERNAL_API_URL=http://go-core:8080
+      - MINIO_INTERNAL_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
     depends_on:
       - go-core
     restart: unless-stopped
