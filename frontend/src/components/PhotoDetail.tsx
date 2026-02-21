@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Clock, Zap, MapPin, Calendar, Sparkles, Loader2 } from "lucide-react";
+import { X, Camera, Aperture, Clock, Zap, MapPin, Calendar, Sparkles, Loader2, Palette } from "lucide-react";
 
 interface ExifData {
   CameraModel: string;
@@ -18,6 +18,7 @@ interface ExifData {
   GPSLongitude: string;
   Software: string;
   ColorSpace: string;
+  ICCProfileName?: string;
 }
 
 interface AIAnalysis {
@@ -243,6 +244,27 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                     <p className="text-sm text-zinc-300">{exif.Software}</p>
                   </div>
                 )}
+                {/* Color space badge — shown when ICCProfileName or ColorSpace is available */}
+                {(exif.ICCProfileName || exif.ColorSpace) && (() => {
+                  const label = exif.ICCProfileName || exif.ColorSpace;
+                  const badgeClass = /adobe/i.test(label)
+                    ? "bg-orange-500/20 text-orange-300 border-orange-500/30"
+                    : /p3/i.test(label)
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500/30"
+                    : /2020/i.test(label)
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/30"
+                    : /srgb/i.test(label)
+                    ? "bg-blue-500/20 text-blue-300 border-blue-500/30"
+                    : "bg-zinc-700/40 text-zinc-300 border-zinc-600/30";
+                  return (
+                    <div className="flex items-center gap-3">
+                      <Palette className="w-4 h-4 text-zinc-400" />
+                      <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded border ${badgeClass}`}>
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           ) : (

@@ -13,6 +13,7 @@ interface ExifData {
   GPSLongitude: string;
   Software: string;
   ColorSpace: string;
+  ICCProfileName?: string;
 }
 
 interface Photo {

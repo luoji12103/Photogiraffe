@@ -36,6 +36,7 @@ type ExifData struct {
 	ShutterSpeed     string
 	ISO              string
 	ColorSpace       string // e.g., sRGB, Adobe RGB, Display P3
+	ICCProfileName   string // Full ICC profile name from embedded metadata
 	GPSLatitude      string
 	GPSLongitude     string
 	Software         string
