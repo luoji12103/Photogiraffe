@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: ${DB_NAME:-photogiraffe}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -19,7 +19,7 @@ services:
     container_name: photogiraffe-redis
     command: redis-server --requirepass ${REDIS_PASSWORD:-redispass}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     restart: unless-stopped
@@ -42,7 +42,7 @@ services:
       context: ./go-core
     container_name: photogiraffe-go-core
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - DB_HOST=postgres
       - DB_USER=${DB_USER:-postgres}
@@ -53,6 +53,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
+      - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
     depends_on:
       - postgres
       - redis
@@ -69,6 +72,7 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
     depends_on:
       - redis
       - minio
@@ -89,6 +93,7 @@ services:
       - MINIO_INTERNAL_URL=http://minio:9000
       - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
     depends_on:
       - go-core
     restart: unless-stopped

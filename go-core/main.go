@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"photogiraffe/core/database"
@@ -17,7 +19,42 @@ import (
 	"gorm.io/gorm"
 )
 
+// requireAuth checks the Authorization: Bearer <token> header.
+func requireAuth(token string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		auth := c.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		}
+		return c.Next()
+	}
+}
+
+// requireInternalSecret checks the X-Internal-Secret header for worker-only routes.
+func requireInternalSecret(secret string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if c.Get("X-Internal-Secret") != secret {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden"})
+		}
+		return c.Next()
+	}
+}
+
 func main() {
+	// Load auth credentials from environment
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		log.Fatal("ADMIN_TOKEN environment variable is not set. Refusing to start without authentication.")
+	}
+	internalSecret := os.Getenv("INTERNAL_SECRET")
+	if internalSecret == "" {
+		log.Fatal("INTERNAL_SECRET environment variable is not set. Refusing to start without worker authentication.")
+	}
+	corsAllowOrigin := os.Getenv("CORS_ALLOW_ORIGIN")
+	if corsAllowOrigin == "" {
+		corsAllowOrigin = "http://localhost:3000"
+	}
+
 	// Initialize Database Connection
 	database.Connect()
 
@@ -52,10 +89,11 @@ func main() {
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
 
-	// Enable CORS
+	// Enable CORS — restricted to configured frontend origin
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept",
+		AllowOrigins: corsAllowOrigin,
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Internal-Secret",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -67,7 +105,7 @@ func main() {
 		return c.SendString("Go Core API is healthy! Database connection is active.")
 	})
 
-	app.Post("/upload", func(c *fiber.Ctx) error {
+	app.Post("/upload", requireAuth(adminToken), func(c *fiber.Ctx) error {
 		// Parse the multipart form
 		file, err := c.FormFile("image")
 		if err != nil {
@@ -129,7 +167,7 @@ func main() {
 	})
 
 	// Internal API for Python Worker to update photo status
-	app.Put("/internal/photos/:id/status", func(c *fiber.Ctx) error {
+	app.Put("/internal/photos/:id/status", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 
 		type StatusUpdate struct {
@@ -186,7 +224,7 @@ func main() {
 	})
 
 	// API to get AI Config
-	app.Get("/api/config/ai", func(c *fiber.Ctx) error {
+	app.Get("/api/config/ai", requireAuth(adminToken), func(c *fiber.Ctx) error {
 		var config models.AIConfig
 		result := database.DB.First(&config)
 		if result.Error != nil {
@@ -201,7 +239,7 @@ func main() {
 	})
 
 	// API to update AI Config
-	app.Post("/api/config/ai", func(c *fiber.Ctx) error {
+	app.Post("/api/config/ai", requireAuth(adminToken), func(c *fiber.Ctx) error {
 		var input models.AIConfig
 		if err := c.BodyParser(&input); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
@@ -220,6 +258,7 @@ func main() {
 		}
 
 		// Update existing config
+		config.Provider = input.Provider
 		config.BaseURL = input.BaseURL
 		config.ModelName = input.ModelName
 		if input.APIKey != "********" && input.APIKey != "" {
@@ -231,7 +270,7 @@ func main() {
 	})
 
 	// API to trigger AI Analysis
-	app.Post("/api/photos/:id/analyze", func(c *fiber.Ctx) error {
+	app.Post("/api/photos/:id/analyze", requireAuth(adminToken), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		var photo models.Photo
 		result := database.DB.First(&photo, id)
@@ -246,9 +285,14 @@ func main() {
 		}
 
 		// Push task to Redis Queue
+		provider := config.Provider
+		if provider == "" {
+			provider = "openai_compatible"
+		}
 		taskData := map[string]interface{}{
 			"photo_id":   photo.ID,
 			"minio_path": photo.MinioPath,
+			"provider":   provider,
 			"base_url":   config.BaseURL,
 			"api_key":    config.APIKey,
 			"model_name": config.ModelName,
@@ -262,7 +306,7 @@ func main() {
 	})
 
 	// Internal API to update AI Analysis result
-	app.Put("/internal/photos/:id/analysis", func(c *fiber.Ctx) error {
+	app.Put("/internal/photos/:id/analysis", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		var input struct {
 			Analysis string `json:"analysis"`

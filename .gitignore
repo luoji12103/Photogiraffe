@@ -1,0 +1,21 @@
+# Environment variables (contains secrets — never commit)
+.env
+.env.local
+.env.*.local
+
+# Go build artifacts
+go-core/main
+go-core/*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node.js
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Docker
+*.log

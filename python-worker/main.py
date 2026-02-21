@@ -12,6 +12,10 @@ from pillow_heif import register_heif_opener
 import exifread
 import rawpy
 from openai import OpenAI
+import anthropic
+from google import genai as google_genai
+from google.genai import types as google_types
+from zhipuai import ZhipuAI
 
 register_heif_opener()
 
@@ -25,6 +29,14 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin12345")
 GO_CORE_URL = os.getenv("GO_CORE_URL", "http://go-core:8080")
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "")
+
+# Provider default base URLs (for OpenAI-compatible providers)
+PROVIDER_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "minimax": "https://api.minimax.chat/v1",
+}
 
 STREAM_NAME = "image_processing_queue"
 AI_STREAM_NAME = "ai_analysis_queue"
@@ -167,7 +179,7 @@ def process_image(minio_client, photo_id, minio_path):
         payload = {"status": "completed"}
         if exif_data:
             payload["exif_data"] = exif_data
-        res = requests.put(update_url, json=payload)
+        res = requests.put(update_url, json=payload, headers={"X-Internal-Secret": INTERNAL_SECRET})
         res.raise_for_status()
 
         logger.info(f"Successfully processed photo {photo_id}")
@@ -178,77 +190,148 @@ def process_image(minio_client, photo_id, minio_path):
         # Try to update status to failed
         try:
             update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/status"
-            requests.put(update_url, json={"status": "failed"})
+            requests.put(update_url, json={"status": "failed"}, headers={"X-Internal-Secret": INTERNAL_SECRET})
         except Exception as inner_e:
             logger.error(f"Failed to update status to failed: {inner_e}")
         return False
 
-def process_ai_analysis(minio_client, photo_id, minio_path, base_url, api_key, model_name):
+AI_ANALYSIS_PROMPT = """
+You are an expert photography critic and art analyst. Analyze the provided image and return a JSON object with the following structure:
+{
+    "description": "A detailed description of the scene, subjects, and lighting.",
+    "composition": "Analysis of the composition techniques used (e.g., rule of thirds, leading lines, framing).",
+    "color_emotion": "Analysis of the color palette and the emotional impact or mood it conveys.",
+    "artistic_advice": "Constructive feedback or suggestions for improvement from an artistic perspective."
+}
+Ensure the response is valid JSON only, no markdown fences.
+"""
+
+
+def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, base_url: str) -> str:
+    """OpenAI / DeepSeek / MiniMax / any OpenAI-compatible endpoint."""
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
+            ],
+        }],
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content
+
+
+def _call_google(image_data: bytes, api_key: str, model_name: str) -> str:
+    """Google Gemini via google-genai SDK (new API)."""
+    client = google_genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[
+            google_types.Content(parts=[
+                google_types.Part(text=AI_ANALYSIS_PROMPT),
+                google_types.Part.from_bytes(data=image_data, mime_type="image/webp"),
+            ])
+        ],
+        config=google_types.GenerateContentConfig(
+            response_mime_type="application/json"
+        ),
+    )
+    return response.text
+
+
+def _call_anthropic(base64_image: str, api_key: str, model_name: str) -> str:
+    """Anthropic Claude via anthropic SDK."""
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model_name,
+        max_tokens=1024,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/webp",
+                        "data": base64_image,
+                    },
+                },
+                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+            ],
+        }],
+    )
+    return message.content[0].text
+
+
+def _call_zhipu(base64_image: str, api_key: str, model_name: str) -> str:
+    """ZhipuAI (GLM-4V) via zhipuai SDK."""
+    client = ZhipuAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
+                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+            ],
+        }],
+    )
+    return response.choices[0].message.content
+
+
+def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url=""):
     bucket_name = "photos"
+    # Normalise provider; fall back to openai_compatible for legacy records
+    if not provider:
+        provider = "openai_compatible"
+
     try:
-        logger.info(f"Starting AI analysis for photo {photo_id}...")
-        
+        logger.info(f"Starting AI analysis for photo {photo_id} via provider={provider}, model={model_name}...")
+
         # 1. Download proxy image from MinIO
         proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
         response = minio_client.get_object(bucket_name, proxy_path)
         image_data = response.read()
         response.close()
         response.release_conn()
-        
-        # 2. Encode image to base64
-        base64_image = base64.b64encode(image_data).decode('utf-8')
-        
-        # 3. Call AI Model
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key,
-        )
-        
-        prompt = """
-        You are an expert photography critic and art analyst. Analyze the provided image and return a JSON object with the following structure:
-        {
-            "description": "A detailed description of the scene, subjects, and lighting.",
-            "composition": "Analysis of the composition techniques used (e.g., rule of thirds, leading lines, framing).",
-            "color_emotion": "Analysis of the color palette and the emotional impact or mood it conveys.",
-            "artistic_advice": "Constructive feedback or suggestions for improvement from an artistic perspective."
-        }
-        Ensure the response is valid JSON.
-        """
-        
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/webp;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            response_format={ "type": "json_object" }
-        )
-        
-        analysis_result = response.choices[0].message.content
+
+        # 2. Encode image to base64 (used by most providers)
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+
+        # 3. Dispatch to provider SDK
+        if provider == "google":
+            analysis_result = _call_google(image_data, api_key, model_name)
+
+        elif provider == "anthropic":
+            analysis_result = _call_anthropic(base64_image, api_key, model_name)
+
+        elif provider == "zhipu":
+            analysis_result = _call_zhipu(base64_image, api_key, model_name)
+
+        else:
+            # openai | deepseek | minimax | openai_compatible
+            effective_base_url = PROVIDER_BASE_URLS.get(provider, base_url)
+            if not effective_base_url:
+                raise ValueError(f"Provider '{provider}' requires a Base URL but none was provided.")
+            analysis_result = _call_openai_compatible(base64_image, api_key, model_name, effective_base_url)
+
         logger.info(f"AI analysis completed for photo {photo_id}: {analysis_result}")
-        
-        # 4. Update status in Go Core API
+
+        # 4. Update result in Go Core API
         update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/analysis"
-        payload = {"analysis": analysis_result}
-        res = requests.put(update_url, json=payload)
+        res = requests.put(update_url, json={"analysis": analysis_result}, headers={"X-Internal-Secret": INTERNAL_SECRET})
         res.raise_for_status()
-        
+
         logger.info(f"Successfully saved AI analysis for photo {photo_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to process AI analysis for photo {photo_id}: {e}")
         return False
+
 
 def main():
     logger.info("Python Worker starting...")
@@ -289,12 +372,13 @@ def main():
                     elif stream == AI_STREAM_NAME:
                         photo_id = message_data.get("photo_id")
                         minio_path = message_data.get("minio_path")
-                        base_url = message_data.get("base_url")
+                        provider = message_data.get("provider", "openai_compatible")
+                        base_url = message_data.get("base_url", "")
                         api_key = message_data.get("api_key")
                         model_name = message_data.get("model_name")
                         
-                        if photo_id and minio_path and base_url and api_key and model_name:
-                            success = process_ai_analysis(minio_client, photo_id, minio_path, base_url, api_key, model_name)
+                        if photo_id and minio_path and api_key and model_name:
+                            success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url)
                             if success:
                                 # ACK the message
                                 r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)

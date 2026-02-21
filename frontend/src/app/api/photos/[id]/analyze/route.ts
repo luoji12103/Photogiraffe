@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -12,6 +14,7 @@ export async function POST(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${ADMIN_TOKEN}`,
       },
     });
 

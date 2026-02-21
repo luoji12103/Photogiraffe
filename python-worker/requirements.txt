@@ -6,3 +6,6 @@ pillow-heif
 exifread
 rawpy
 openai
+google-genai
+anthropic
+zhipuai

@@ -51,7 +51,8 @@ type FeatureFlag struct {
 
 type AIConfig struct {
 	gorm.Model
-	BaseURL   string `gorm:"not null"`
+	Provider  string `gorm:"not null;default:'openai_compatible'"` // openai | google | anthropic | zhipu | deepseek | minimax | openai_compatible
+	BaseURL   string // optional: required only for openai_compatible provider
 	APIKey    string `gorm:"not null"`
 	ModelName string `gorm:"not null"`
 }
