@@ -189,7 +189,7 @@ def process_ai_analysis(minio_client, photo_id, minio_path, base_url, api_key, m
         logger.info(f"Starting AI analysis for photo {photo_id}...")
         
         # 1. Download proxy image from MinIO
-        proxy_path = minio_path.replace("original/", "proxy/").replace(minio_path.split('.')[-1], "webp")
+        proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
         response = minio_client.get_object(bucket_name, proxy_path)
         image_data = response.read()
         response.close()
