@@ -78,6 +78,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - INTERNAL_API_URL=http://go-core:8080
     container_name: photogiraffe-frontend
     ports:
       - "3000:3000"
