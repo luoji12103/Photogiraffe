@@ -5,7 +5,7 @@ import json
 import requests
 import base64
 from io import BytesIO
-from PIL import Image
+from PIL import Image, ImageCms
 import redis
 from minio import Minio
 from pillow_heif import register_heif_opener
@@ -21,6 +21,69 @@ register_heif_opener()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ─── Color space helpers (Phase 3 Step 1) ─────────────────────────────────────
+
+# NCLX color_primaries values (ISO 23091-2 / HEVC/HEIF)
+_NCLX_PRIMARIES = {1: "sRGB", 9: "Rec. 2020", 12: "Display P3"}
+
+
+def get_icc_profile_name(img: 'Image.Image', is_raw: bool = False) -> str:
+    """
+    Determine the color space name for a Pillow image.
+    Priority: embedded ICC profile > HEIF NCLX profile > fallback 'sRGB'.
+    """
+    if is_raw:
+        # rawpy postprocess outputs sRGB-like data; no ICC profile available.
+        return "sRGB"
+
+    # 1. Embedded ICC profile (present in JPEG from Lightroom / camera, TIFF)
+    icc_raw = img.info.get("icc_profile")
+    if icc_raw:
+        try:
+            profile = ImageCms.ImageCmsProfile(BytesIO(icc_raw))
+            name = ImageCms.getProfileName(profile).strip()
+            return name if name else "Unknown"
+        except Exception:
+            pass
+
+    # 2. HEIF NCLX profile (pillow_heif exposes this)
+    nclx = img.info.get("nclx_profile")
+    if isinstance(nclx, dict):
+        primaries = nclx.get("color_primaries", 0)
+        return _NCLX_PRIMARIES.get(primaries, f"NCLX-{primaries}")
+
+    return "sRGB"
+
+
+def convert_to_srgb(img: 'Image.Image') -> 'Image.Image':
+    """
+    Convert image to sRGB using its embedded ICC profile.
+    Handles CMYK, LAB, RGBA, and other modes gracefully.
+    Falls back to Pillow's bare convert() if ImageCms fails.
+    """
+    # Strip alpha before ICC conversion (ICC profiles are RGB, not RGBA)
+    if img.mode == "RGBA":
+        img = img.convert("RGB")
+
+    icc_raw = img.info.get("icc_profile")
+    if not icc_raw:
+        # No ICC profile — just ensure we're in RGB mode.
+        return img if img.mode == "RGB" else img.convert("RGB")
+
+    src_mode = img.mode if img.mode in ("RGB", "CMYK", "LAB", "YCbCr", "HSV") else "RGB"
+    try:
+        src_profile = ImageCms.ImageCmsProfile(BytesIO(icc_raw))
+        dst_profile = ImageCms.createProfile("sRGB")
+        transform = ImageCms.buildTransformFromOpenProfiles(
+            src_profile, dst_profile,
+            src_mode, "RGB",
+            renderingIntent=ImageCms.Intent.PERCEPTUAL,
+        )
+        return ImageCms.applyTransform(img, transform)
+    except Exception as e:
+        logger.warning(f"ICC color conversion failed ({e}); using fallback convert()")
+        return img.convert("RGB")
 
 # Environment variables
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -142,9 +205,19 @@ def process_image(minio_client, photo_id, minio_path):
         except Exception as e:
             logger.warning(f"Failed to extract EXIF data: {e}")
 
-        # Convert to RGB if necessary (e.g., RGBA or CMYK)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
+        # Phase 3 Step 1: Determine ICC/color-space metadata before converting.
+        # This must happen while 'img' still has its original info dict.
+        icc_profile_name = get_icc_profile_name(img, is_raw)
+        logger.info(f"Detected color space: {icc_profile_name}")
+        if exif_data:
+            exif_data["ICCProfileName"] = icc_profile_name
+        else:
+            exif_data = {"ICCProfileName": icc_profile_name}
+
+        # Phase 3 Step 1: ICC-aware sRGB conversion.
+        # Replaces the former bare `img.convert("RGB")` which silently dropped
+        # wide-gamut (Adobe RGB / Display P3) colour information.
+        img = convert_to_srgb(img)
 
         # Generate Proxy (max 2048px)
         proxy_img = img.copy()

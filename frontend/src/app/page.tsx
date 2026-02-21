@@ -1,4 +1,5 @@
 import PhotoGrid from "@/components/PhotoGrid";
+import UploadPanel from "@/components/UploadPanel";
 import Link from "next/link";
 
 interface Photo {
@@ -33,9 +34,12 @@ export default async function Home() {
           <h1 className="text-4xl font-bold tracking-tight">Photogiraffe Gallery</h1>
           <p className="text-zinc-500 dark:text-zinc-400 mt-2">Your high-quality photo collection.</p>
         </div>
-        <Link href="/settings" className="px-4 py-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors">
-          Settings
-        </Link>
+        <div className="flex items-center gap-3">
+          <UploadPanel />
+          <Link href="/settings" className="px-4 py-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg text-sm font-medium hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors">
+            Settings
+          </Link>
+        </div>
       </header>
 
       <main>
