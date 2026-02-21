@@ -23,6 +23,7 @@ type Photo struct {
 	Status           string `gorm:"default:'processing'"` // e.g., processing, completed, failed
 	UploadedAt       time.Time
 	ExifData         ExifData
+	AIAnalysis       string `gorm:"type:jsonb"`
 }
 
 type ExifData struct {
@@ -46,4 +47,11 @@ type FeatureFlag struct {
 	FeatureName string `gorm:"uniqueIndex;not null"`
 	IsEnabled   bool   `gorm:"default:false"`
 	Description string
+}
+
+type AIConfig struct {
+	gorm.Model
+	BaseURL   string `gorm:"not null"`
+	APIKey    string `gorm:"not null"`
+	ModelName string `gorm:"not null"`
 }

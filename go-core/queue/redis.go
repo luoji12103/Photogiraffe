@@ -50,3 +50,18 @@ func PublishImageProcessingTask(photoID uint, minioPath string) error {
 	fmt.Printf("Successfully published task for PhotoID %d to %s\n", photoID, streamName)
 	return nil
 }
+
+func PushTask(streamName string, values map[string]interface{}) error {
+	err := RedisClient.XAdd(Ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: values,
+	}).Err()
+
+	if err != nil {
+		log.Printf("Failed to publish task to Redis Stream %s: %v", streamName, err)
+		return err
+	}
+
+	fmt.Printf("Successfully published task to %s\n", streamName)
+	return nil
+}

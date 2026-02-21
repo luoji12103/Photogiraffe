@@ -17,6 +17,9 @@ const nextConfig: NextConfig = {
         pathname: "/photos/**",
       },
     ],
+    dangerouslyAllowSVG: true,
+    contentDispositionType: 'attachment',
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
 };
 

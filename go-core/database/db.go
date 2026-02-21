@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 
+	"photogiraffe/core/models"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -28,4 +30,10 @@ func Connect() {
 
 	DB = db
 	fmt.Println("Successfully connected to PostgreSQL database!")
+
+	// Auto Migrate
+	err = db.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{})
+	if err != nil {
+		log.Fatal("Failed to auto migrate database: ", err)
+	}
 }

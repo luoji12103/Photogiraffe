@@ -1,4 +1,5 @@
 import PhotoGrid from "@/components/PhotoGrid";
+import Link from "next/link";
 
 interface Photo {
   ID: number;
@@ -28,9 +29,14 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans p-8">
-      <header className="mb-12">
-        <h1 className="text-4xl font-bold tracking-tight">Photogiraffe Gallery</h1>
-        <p className="text-zinc-500 dark:text-zinc-400 mt-2">Your high-quality photo collection.</p>
+      <header className="mb-12 flex justify-between items-center">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight">Photogiraffe Gallery</h1>
+          <p className="text-zinc-500 dark:text-zinc-400 mt-2">Your high-quality photo collection.</p>
+        </div>
+        <Link href="/settings" className="px-4 py-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors">
+          Settings
+        </Link>
       </header>
 
       <main>

@@ -3,6 +3,7 @@ import time
 import logging
 import json
 import requests
+import base64
 from io import BytesIO
 from PIL import Image
 import redis
@@ -10,6 +11,7 @@ from minio import Minio
 from pillow_heif import register_heif_opener
 import exifread
 import rawpy
+from openai import OpenAI
 
 register_heif_opener()
 
@@ -25,6 +27,7 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin12345")
 GO_CORE_URL = os.getenv("GO_CORE_URL", "http://go-core:8080")
 
 STREAM_NAME = "image_processing_queue"
+AI_STREAM_NAME = "ai_analysis_queue"
 GROUP_NAME = "python_workers"
 CONSUMER_NAME = "worker_1"
 
@@ -33,6 +36,13 @@ def init_redis():
     try:
         r.xgroup_create(STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
         logger.info(f"Created consumer group {GROUP_NAME} for stream {STREAM_NAME}")
+    except redis.exceptions.ResponseError as e:
+        if "BUSYGROUP Consumer Group name already exists" not in str(e):
+            logger.error(f"Error creating consumer group: {e}")
+            
+    try:
+        r.xgroup_create(AI_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        logger.info(f"Created consumer group {GROUP_NAME} for stream {AI_STREAM_NAME}")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP Consumer Group name already exists" not in str(e):
             logger.error(f"Error creating consumer group: {e}")
@@ -173,6 +183,73 @@ def process_image(minio_client, photo_id, minio_path):
             logger.error(f"Failed to update status to failed: {inner_e}")
         return False
 
+def process_ai_analysis(minio_client, photo_id, minio_path, base_url, api_key, model_name):
+    bucket_name = "photos"
+    try:
+        logger.info(f"Starting AI analysis for photo {photo_id}...")
+        
+        # 1. Download proxy image from MinIO
+        proxy_path = minio_path.replace("original/", "proxy/").replace(minio_path.split('.')[-1], "webp")
+        response = minio_client.get_object(bucket_name, proxy_path)
+        image_data = response.read()
+        response.close()
+        response.release_conn()
+        
+        # 2. Encode image to base64
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        # 3. Call AI Model
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key,
+        )
+        
+        prompt = """
+        You are an expert photography critic and art analyst. Analyze the provided image and return a JSON object with the following structure:
+        {
+            "description": "A detailed description of the scene, subjects, and lighting.",
+            "composition": "Analysis of the composition techniques used (e.g., rule of thirds, leading lines, framing).",
+            "color_emotion": "Analysis of the color palette and the emotional impact or mood it conveys.",
+            "artistic_advice": "Constructive feedback or suggestions for improvement from an artistic perspective."
+        }
+        Ensure the response is valid JSON.
+        """
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/webp;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            response_format={ "type": "json_object" }
+        )
+        
+        analysis_result = response.choices[0].message.content
+        logger.info(f"AI analysis completed for photo {photo_id}: {analysis_result}")
+        
+        # 4. Update status in Go Core API
+        update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/analysis"
+        payload = {"analysis": analysis_result}
+        res = requests.put(update_url, json=payload)
+        res.raise_for_status()
+        
+        logger.info(f"Successfully saved AI analysis for photo {photo_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to process AI analysis for photo {photo_id}: {e}")
+        return False
+
 def main():
     logger.info("Python Worker starting...")
     
@@ -185,28 +262,46 @@ def main():
     logger.info("Python Worker started. Waiting for tasks...")
     while True:
         try:
-            # Read from Redis Stream
-            messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME, {STREAM_NAME: ">"}, count=1, block=5000)
+            # Read from Redis Streams
+            messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME, {STREAM_NAME: ">", AI_STREAM_NAME: ">"}, count=1, block=5000)
             
             if not messages:
                 continue
 
             for stream, message_list in messages:
                 for message_id, message_data in message_list:
-                    logger.info(f"Received task: {message_id} -> {message_data}")
+                    logger.info(f"Received task from {stream}: {message_id} -> {message_data}")
                     
-                    photo_id = message_data.get("photo_id")
-                    minio_path = message_data.get("minio_path")
-                    
-                    if photo_id and minio_path:
-                        success = process_image(minio_client, photo_id, minio_path)
-                        if success:
-                            # ACK the message
+                    if stream == STREAM_NAME:
+                        photo_id = message_data.get("photo_id")
+                        minio_path = message_data.get("minio_path")
+                        
+                        if photo_id and minio_path:
+                            success = process_image(minio_client, photo_id, minio_path)
+                            if success:
+                                # ACK the message
+                                r.xack(STREAM_NAME, GROUP_NAME, message_id)
+                                logger.info(f"Acknowledged message {message_id}")
+                        else:
+                            logger.warning(f"Invalid message data: {message_data}")
                             r.xack(STREAM_NAME, GROUP_NAME, message_id)
-                            logger.info(f"Acknowledged message {message_id}")
-                    else:
-                        logger.warning(f"Invalid message data: {message_data}")
-                        r.xack(STREAM_NAME, GROUP_NAME, message_id)
+                    
+                    elif stream == AI_STREAM_NAME:
+                        photo_id = message_data.get("photo_id")
+                        minio_path = message_data.get("minio_path")
+                        base_url = message_data.get("base_url")
+                        api_key = message_data.get("api_key")
+                        model_name = message_data.get("model_name")
+                        
+                        if photo_id and minio_path and base_url and api_key and model_name:
+                            success = process_ai_analysis(minio_client, photo_id, minio_path, base_url, api_key, model_name)
+                            if success:
+                                # ACK the message
+                                r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
+                                logger.info(f"Acknowledged message {message_id}")
+                        else:
+                            logger.warning(f"Invalid message data for AI analysis: {message_data}")
+                            r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
 
         except Exception as e:
             logger.error(f"Error in worker loop: {e}")

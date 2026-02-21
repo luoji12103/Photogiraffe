@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -21,7 +22,7 @@ func main() {
 	database.Connect()
 
 	// Auto Migrate Models
-	err := database.DB.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{})
+	err := database.DB.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{})
 	if err != nil {
 		log.Fatal("Failed to auto migrate database: ", err)
 	}
@@ -182,6 +183,104 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
 		return c.JSON(photo)
+	})
+
+	// API to get AI Config
+	app.Get("/api/config/ai", func(c *fiber.Ctx) error {
+		var config models.AIConfig
+		result := database.DB.First(&config)
+		if result.Error != nil {
+			if result.Error == gorm.ErrRecordNotFound {
+				return c.JSON(fiber.Map{}) // Return empty object if not found
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch AI config"})
+		}
+		// Hide API Key for security
+		config.APIKey = "********"
+		return c.JSON(config)
+	})
+
+	// API to update AI Config
+	app.Post("/api/config/ai", func(c *fiber.Ctx) error {
+		var input models.AIConfig
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var config models.AIConfig
+		result := database.DB.First(&config)
+		
+		if result.Error != nil {
+			if result.Error == gorm.ErrRecordNotFound {
+				// Create new config
+				database.DB.Create(&input)
+				return c.JSON(fiber.Map{"message": "AI config created successfully"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch AI config"})
+		}
+
+		// Update existing config
+		config.BaseURL = input.BaseURL
+		config.ModelName = input.ModelName
+		if input.APIKey != "********" && input.APIKey != "" {
+			config.APIKey = input.APIKey
+		}
+		database.DB.Save(&config)
+
+		return c.JSON(fiber.Map{"message": "AI config updated successfully"})
+	})
+
+	// API to trigger AI Analysis
+	app.Post("/api/photos/:id/analyze", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var photo models.Photo
+		result := database.DB.First(&photo, id)
+		if result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		var config models.AIConfig
+		configResult := database.DB.First(&config)
+		if configResult.Error != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "AI Configuration not found. Please configure AI settings first."})
+		}
+
+		// Push task to Redis Queue
+		taskData := map[string]interface{}{
+			"photo_id":   photo.ID,
+			"minio_path": photo.MinioPath,
+			"base_url":   config.BaseURL,
+			"api_key":    config.APIKey,
+			"model_name": config.ModelName,
+		}
+		err := queue.PushTask("ai_analysis_queue", taskData)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue AI analysis task"})
+		}
+
+		return c.JSON(fiber.Map{"message": "AI analysis task queued successfully"})
+	})
+
+	// Internal API to update AI Analysis result
+	app.Put("/internal/photos/:id/analysis", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var input struct {
+			Analysis string `json:"analysis"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var photo models.Photo
+		result := database.DB.First(&photo, id)
+		if result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		photo.AIAnalysis = input.Analysis
+		database.DB.Save(&photo)
+
+		return c.JSON(fiber.Map{"message": "AI analysis updated successfully"})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")
