@@ -7,17 +7,17 @@ import { motion } from "framer-motion";
 import { X, Camera, Aperture, Clock, Zap, MapPin, Calendar, Sparkles, Loader2 } from "lucide-react";
 
 interface ExifData {
-  Make: string;
-  Model: string;
+  CameraModel: string;
   LensModel: string;
-  FNumber: number;
-  ExposureTime: string;
-  ISOSpeedRatings: number;
-  FocalLength: number;
+  Aperture: string;
+  ShutterSpeed: string;
+  ISO: string;
+  FocalLength: string;
   DateTimeOriginal: string;
-  GPSLatitude: number;
-  GPSLongitude: number;
+  GPSLatitude: string;
+  GPSLongitude: string;
   Software: string;
+  ColorSpace: string;
 }
 
 interface AIAnalysis {
@@ -128,6 +128,7 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
                 className="object-contain"
                 sizes="100vw"
                 priority
+                unoptimized
               />
             </motion.div>
           </motion.div>
@@ -149,11 +150,11 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
               {/* Camera & Lens */}
               <div className="space-y-3">
                 <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Equipment</h3>
-                {(exif.Make || exif.Model) && (
+                {exif.CameraModel && (
                   <div className="flex items-start gap-3">
                     <Camera className="w-5 h-5 text-zinc-400 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-zinc-200">{exif.Make} {exif.Model}</p>
+                      <p className="text-sm font-medium text-zinc-200">{exif.CameraModel}</p>
                     </div>
                   </div>
                 )}
@@ -173,22 +174,22 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
               <div className="space-y-3">
                 <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Settings</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  {exif.FNumber && (
+                  {exif.Aperture && (
                     <div>
                       <p className="text-xs text-zinc-500">Aperture</p>
-                      <p className="text-sm font-medium text-zinc-200">f/{exif.FNumber}</p>
+                      <p className="text-sm font-medium text-zinc-200">f/{exif.Aperture}</p>
                     </div>
                   )}
-                  {exif.ExposureTime && (
+                  {exif.ShutterSpeed && (
                     <div>
                       <p className="text-xs text-zinc-500">Shutter</p>
-                      <p className="text-sm font-medium text-zinc-200">{exif.ExposureTime}s</p>
+                      <p className="text-sm font-medium text-zinc-200">1/{exif.ShutterSpeed}s</p>
                     </div>
                   )}
-                  {exif.ISOSpeedRatings && (
+                  {exif.ISO && (
                     <div>
                       <p className="text-xs text-zinc-500">ISO</p>
-                      <p className="text-sm font-medium text-zinc-200">{exif.ISOSpeedRatings}</p>
+                      <p className="text-sm font-medium text-zinc-200">{exif.ISO}</p>
                     </div>
                   )}
                   {exif.FocalLength && (
@@ -213,11 +214,11 @@ export default function PhotoDetail({ photo: initialPhoto, minioUrl }: PhotoDeta
                     </p>
                   </div>
                 )}
-                {(exif.GPSLatitude !== 0 && exif.GPSLongitude !== 0) && (
+                {(!!exif.GPSLatitude && !!exif.GPSLongitude) && (
                   <div className="flex items-center gap-3">
                     <MapPin className="w-4 h-4 text-zinc-400" />
                     <p className="text-sm text-zinc-300">
-                      {exif.GPSLatitude.toFixed(4)}, {exif.GPSLongitude.toFixed(4)}
+                      {parseFloat(exif.GPSLatitude).toFixed(4)}, {parseFloat(exif.GPSLongitude).toFixed(4)}
                     </p>
                   </div>
                 )}

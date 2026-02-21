@@ -46,6 +46,7 @@ export default function PhotoGrid({ photos, minioUrl }: PhotoGridProps) {
                     fill
                     className="object-cover transition-transform duration-300 group-hover:scale-105"
                     sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    unoptimized
                   />
                 </motion.div>
               ) : (

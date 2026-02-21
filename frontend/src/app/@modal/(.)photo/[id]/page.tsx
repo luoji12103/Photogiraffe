@@ -2,17 +2,17 @@ import PhotoDetail from "@/components/PhotoDetail";
 import { notFound } from "next/navigation";
 
 interface ExifData {
-  Make: string;
-  Model: string;
+  CameraModel: string;
   LensModel: string;
-  FNumber: number;
-  ExposureTime: string;
-  ISOSpeedRatings: number;
-  FocalLength: number;
+  Aperture: string;
+  ShutterSpeed: string;
+  ISO: string;
+  FocalLength: string;
   DateTimeOriginal: string;
-  GPSLatitude: number;
-  GPSLongitude: number;
+  GPSLatitude: string;
+  GPSLongitude: string;
   Software: string;
+  ColorSpace: string;
 }
 
 interface Photo {
