@@ -11,6 +11,7 @@ import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
 import ExportPanel from "./ExportPanel";
+import PresetPanel from "./PresetPanel";
 
 interface ExifData {
   CameraModel: string;
@@ -315,6 +316,9 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
           {/* Adjustment Sliders */}
           <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
+
+          {/* Preset Management */}
+          <PresetPanel params={adjustParams} onApply={setAdjustParams} />
 
           {/* Export Engine */}
           <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />

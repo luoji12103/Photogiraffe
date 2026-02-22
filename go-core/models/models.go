@@ -69,3 +69,12 @@ type ExportJob struct {
 	ErrorMessage  string     // error detail (set when failed)
 	CompletedAt   *time.Time // nullable; set when status transitions to completed/failed
 }
+
+// Preset stores a named set of colour-adjustment parameters for reuse.
+type Preset struct {
+	gorm.Model
+	UserID       uint   `gorm:"not null;index"`
+	Name         string `gorm:"not null"`
+	Description  string
+	AdjustParams string `gorm:"type:jsonb;not null"` // serialized AdjustParams JSON
+}

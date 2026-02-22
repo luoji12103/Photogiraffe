@@ -343,6 +343,62 @@ func main() {
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 4 — Preset Management
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/presets — save a named preset
+	app.Post("/api/presets", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		var input struct {
+			Name         string `json:"name"`
+			Description  string `json:"description"`
+			AdjustParams string `json:"adjust_params"` // raw JSON string
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		if input.Name == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Preset name is required"})
+		}
+		// Validate adjust_params is valid JSON
+		if input.AdjustParams == "" {
+			input.AdjustParams = "{}"
+		}
+		var check map[string]interface{}
+		if err := json.Unmarshal([]byte(input.AdjustParams), &check); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid adjust_params JSON"})
+		}
+
+		preset := models.Preset{
+			UserID:       1, // hardcoded until JWT
+			Name:         input.Name,
+			Description:  input.Description,
+			AdjustParams: input.AdjustParams,
+		}
+		if result := database.DB.Create(&preset); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create preset"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(preset)
+	})
+
+	// GET /api/presets — list presets
+	app.Get("/api/presets", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		var presets []models.Preset
+		database.DB.Order("created_at desc").Find(&presets)
+		return c.JSON(presets)
+	})
+
+	// DELETE /api/presets/:id — delete a preset
+	app.Delete("/api/presets/:id", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var preset models.Preset
+		if result := database.DB.First(&preset, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Preset not found"})
+		}
+		database.DB.Delete(&preset)
+		return c.JSON(fiber.Map{"message": "Preset deleted"})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 4 — Export Engine
 	// ─────────────────────────────────────────────────────────────────────────
 
