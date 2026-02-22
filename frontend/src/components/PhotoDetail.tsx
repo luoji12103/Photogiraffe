@@ -43,6 +43,7 @@ interface Photo {
   UploadedAt: string;
   ExifData?: ExifData;
   AIAnalysis?: string | null; // null when AI analysis not yet performed
+  InferredParams?: string | null; // null when AI param inference not yet run
 }
 
 interface PhotoDetailProps {
@@ -54,6 +55,9 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [photo, setPhoto] = useState<Photo>(initialPhoto);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const [isInferring, setIsInferring] = useState(false);
+  const [inferError, setInferError] = useState("");
+  const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
   const display = useDisplayDetect();
 
@@ -91,6 +95,54 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       console.error("Failed to parse AI analysis:", e);
     }
   }
+
+  const handleInferParams = async () => {
+    setIsInferring(true);
+    setInferError("");
+    setInferredSuggestion(null);
+    try {
+      const res = await fetch(`/api/photos/${photo.ID}/infer-params`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to trigger param inference");
+      }
+      // Poll until InferredParams is populated
+      const poll = setInterval(async () => {
+        const checkRes = await fetch(`/api/photos/${photo.ID}`);
+        if (checkRes.ok) {
+          const updated = await checkRes.json();
+          if (updated.InferredParams) {
+            setPhoto(updated);
+            try {
+              const raw: Record<string, unknown> = JSON.parse(updated.InferredParams);
+              setInferredSuggestion({
+                exposure:   Number(raw.exposure   ?? 0),
+                brightness: Number(raw.brightness ?? 0),
+                contrast:   Number(raw.contrast   ?? 0),
+                saturation: Number(raw.saturation ?? 1),
+                tonemap:    Boolean(raw.tonemap),
+              });
+            } catch (_) {/* ignore parse errors */}
+            setIsInferring(false);
+            clearInterval(poll);
+          }
+        }
+      }, 3000);
+      setTimeout(() => {
+        clearInterval(poll);
+        setIsInferring((was) => {
+          if (was) {
+            setInferError("Inference timed out. Please try again.");
+            return false;
+          }
+          return was;
+        });
+      }, 120000);
+    } catch (error: any) {
+      setInferError(error.message);
+      setIsInferring(false);
+    }
+  };
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
@@ -324,6 +376,48 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
           <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
 
           <div className="h-px bg-zinc-800 my-6" />
+
+          {/* AI Param Suggestion */}
+          <div className="space-y-3 mb-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-400" />
+                AI Suggest
+              </h3>
+              {!isInferring && (
+                <button
+                  onClick={handleInferParams}
+                  className="text-xs bg-violet-900/60 hover:bg-violet-800/80 text-violet-200 px-3 py-1.5 rounded-md transition-colors"
+                >
+                  {inferredSuggestion || photo.InferredParams ? "Re-suggest" : "Suggest Params"}
+                </button>
+              )}
+            </div>
+            {isInferring && (
+              <div className="flex items-center text-zinc-500 py-2">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <span className="text-sm">AI is analysing image…</span>
+              </div>
+            )}
+            {inferError && (
+              <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{inferError}</div>
+            )}
+            {inferredSuggestion && (
+              <div className="bg-violet-900/20 border border-violet-700/30 rounded-md p-3 space-y-1 text-xs text-zinc-300">
+                <div className="flex justify-between"><span className="text-zinc-500">Exposure</span><span>{inferredSuggestion.exposure.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Brightness</span><span>{inferredSuggestion.brightness.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Contrast</span><span>{inferredSuggestion.contrast.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">Saturation</span><span>{inferredSuggestion.saturation.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-500">ACES Tone Map</span><span>{inferredSuggestion.tonemap ? "On" : "Off"}</span></div>
+                <button
+                  onClick={() => setAdjustParams(inferredSuggestion!)}
+                  className="w-full mt-2 text-xs bg-violet-600 hover:bg-violet-500 text-white py-1.5 rounded transition-colors"
+                >
+                  Apply Suggestion
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* AI Analysis Section */}
           <div className="space-y-4">

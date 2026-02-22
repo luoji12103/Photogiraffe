@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import logging
 import json
@@ -106,6 +107,7 @@ PROVIDER_BASE_URLS = {
 STREAM_NAME = "image_processing_queue"
 AI_STREAM_NAME = "ai_analysis_queue"
 EXPORT_STREAM_NAME = "export_queue"
+INFER_STREAM_NAME = "infer_params_queue"
 GROUP_NAME = "python_workers"
 CONSUMER_NAME = "worker_1"
 
@@ -128,6 +130,13 @@ def init_redis():
     try:
         r.xgroup_create(EXPORT_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
         logger.info(f"Created consumer group {GROUP_NAME} for stream {EXPORT_STREAM_NAME}")
+    except redis.exceptions.ResponseError as e:
+        if "BUSYGROUP Consumer Group name already exists" not in str(e):
+            logger.error(f"Error creating consumer group: {e}")
+
+    try:
+        r.xgroup_create(INFER_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        logger.info(f"Created consumer group {GROUP_NAME} for stream {INFER_STREAM_NAME}")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP Consumer Group name already exists" not in str(e):
             logger.error(f"Error creating consumer group: {e}")
@@ -288,6 +297,17 @@ You are an expert photography critic and art analyst. Analyze the provided image
 }
 Ensure the response is valid JSON only, no markdown fences.
 """
+
+INFER_PARAMS_PROMPT = """You are an expert photo retouching AI. Analyze this photograph and suggest optimal colour adjustment parameters to make it visually appealing.
+
+Return ONLY a JSON object with these exact keys (no explanation, no markdown fences):
+{
+  "exposure":   <float -3.0 to 3.0, typical -1 to 1>,
+  "brightness": <float -1.0 to 1.0>,
+  "contrast":   <float -1.0 to 1.0>,
+  "saturation": <float 0.0 to 2.0, 1.0 = unchanged>,
+  "tonemap":    <bool, true only if image looks significantly overexposed or HDR>
+}"""
 
 
 def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, base_url: str) -> str:
@@ -619,6 +639,101 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         return False
 
 
+# ─── AI Parameter Inference ─────────────────────────────────────────────────
+
+def _extract_json(text: str) -> str:
+    """Extract first JSON object from LLM response (handles markdown fences)."""
+    match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
+    if match:
+        return match.group(0)
+    return text  # Let json.loads raise on failure
+
+
+def _call_openai_infer(base64_image: str, api_key: str, model_name: str, base_url: str) -> str:
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": INFER_PARAMS_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
+        ]}],
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content
+
+
+def _call_google_infer(image_data: bytes, api_key: str, model_name: str) -> str:
+    client = google_genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[google_types.Content(parts=[
+            google_types.Part(text=INFER_PARAMS_PROMPT),
+            google_types.Part.from_bytes(data=image_data, mime_type="image/webp"),
+        ])],
+        config=google_types.GenerateContentConfig(response_mime_type="application/json"),
+    )
+    return response.text
+
+
+def _call_anthropic_infer(base64_image: str, api_key: str, model_name: str) -> str:
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model_name, max_tokens=512,
+        messages=[{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": base64_image}},
+            {"type": "text", "text": INFER_PARAMS_PROMPT},
+        ]}],
+    )
+    return message.content[0].text
+
+
+def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
+                               provider: str, api_key: str, model_name: str,
+                               base_url: str = "") -> bool:
+    """Analyse a photo via LLM and save suggested adjustment params to DB."""
+    bucket_name = "photos"
+    if not provider:
+        provider = "openai_compatible"
+    try:
+        logger.info(f"[infer:{photo_id}] Starting param inference via {provider}/{model_name}...")
+        response = minio_client.get_object(bucket_name, minio_path)
+        image_data = response.read()
+        response.close()
+        response.release_conn()
+
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+
+        if provider == "google":
+            raw = _call_google_infer(image_data, api_key, model_name)
+        elif provider == "anthropic":
+            raw = _call_anthropic_infer(base64_image, api_key, model_name)
+        else:
+            effective_base_url = PROVIDER_BASE_URLS.get(provider, base_url)
+            if not effective_base_url:
+                raise ValueError(f"Provider '{provider}' requires a Base URL")
+            raw = _call_openai_infer(base64_image, api_key, model_name, effective_base_url)
+
+        params_json_str = _extract_json(raw)
+        parsed = json.loads(params_json_str)
+
+        # Ensure all required keys are present with safe defaults
+        defaults = {"exposure": 0.0, "brightness": 0.0, "contrast": 0.0, "saturation": 1.0, "tonemap": False}
+        for k, v in defaults.items():
+            if k not in parsed:
+                parsed[k] = v
+
+        result_json = json.dumps(parsed)
+        url = f"{GO_CORE_URL}/internal/photos/{photo_id}/inferred-params"
+        res = requests.put(url, json={"inferred_params": result_json},
+                           headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=10)
+        res.raise_for_status()
+        logger.info(f"[infer:{photo_id}] Saved inferred params: {result_json}")
+        return True
+    except Exception as e:
+        logger.error(f"[infer:{photo_id}] Param inference failed: {e}", exc_info=True)
+        return False
+
+
 def _update_export_status(job_id: str, status: str,
                           output_path: str = "", error_message: str = "") -> None:
     url = f"{GO_CORE_URL}/internal/exports/{job_id}/status"
@@ -649,7 +764,8 @@ def main():
         try:
             # Read from Redis Streams
             messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME,
-                                    {STREAM_NAME: ">", AI_STREAM_NAME: ">", EXPORT_STREAM_NAME: ">"},
+                                    {STREAM_NAME: ">", AI_STREAM_NAME: ">",
+                                     EXPORT_STREAM_NAME: ">", INFER_STREAM_NAME: ">"},
                                     count=1, block=5000)
             
             if not messages:
@@ -704,6 +820,23 @@ def main():
 
                         r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
                         logger.info(f"Acknowledged export message {message_id} (success={success})")
+
+                    elif stream == INFER_STREAM_NAME:
+                        photo_id   = message_data.get("photo_id")
+                        minio_path = message_data.get("minio_path")
+                        provider   = message_data.get("provider", "openai_compatible")
+                        base_url   = message_data.get("base_url", "")
+                        api_key    = message_data.get("api_key")
+                        model_name = message_data.get("model_name")
+
+                        if photo_id and minio_path and api_key and model_name:
+                            process_infer_params_task(minio_client, photo_id, minio_path,
+                                                      provider, api_key, model_name, base_url)
+                        else:
+                            logger.warning(f"Invalid infer-params message data: {message_data}")
+
+                        r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
+                        logger.info(f"Acknowledged infer-params message {message_id}")
 
         except Exception as e:
             logger.error(f"Error in worker loop: {e}")

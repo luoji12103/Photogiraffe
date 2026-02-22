@@ -343,6 +343,67 @@ func main() {
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 4 — AI Parameter Inference
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/photos/:id/infer-params — trigger AI parameter inference
+	app.Post("/api/photos/:id/infer-params", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var photo models.Photo
+		result := database.DB.First(&photo, id)
+		if result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if photo.Status != "completed" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
+		}
+
+		var config models.AIConfig
+		if configResult := database.DB.First(&config); configResult.Error != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "AI configuration not found. Please configure AI settings first."})
+		}
+
+		provider := config.Provider
+		if provider == "" {
+			provider = "openai_compatible"
+		}
+
+		// Build proxy path (same pattern as AI analysis)
+		proxyPath := strings.Replace(photo.MinioPath, "raw/", "proxy/", 1)
+		// Replace extension with .webp
+		lastDot := strings.LastIndex(proxyPath, ".")
+		if lastDot > -1 {
+			proxyPath = proxyPath[:lastDot] + ".webp"
+		}
+
+		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue parameter inference task"})
+		}
+
+		return c.JSON(fiber.Map{"message": "Parameter inference task queued successfully"})
+	})
+
+	// PUT /internal/photos/:id/inferred-params — Worker writes back inference result
+	app.Put("/internal/photos/:id/inferred-params", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var input struct {
+			InferredParams string `json:"inferred_params"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		photo.InferredParams = &input.InferredParams
+		database.DB.Save(&photo)
+		return c.JSON(fiber.Map{"message": "Inferred parameters saved"})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 4 — Preset Management
 	// ─────────────────────────────────────────────────────────────────────────
 

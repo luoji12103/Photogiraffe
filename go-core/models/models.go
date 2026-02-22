@@ -24,6 +24,7 @@ type Photo struct {
 	UploadedAt       time.Time
 	ExifData         ExifData
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
+	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters
 }
 
 type ExifData struct {
