@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const INTERNAL_API_URL = process.env.INTERNAL_API_URL || "http://go-core:8080";
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +11,7 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${INTERNAL_API_URL}/upload`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ADMIN_TOKEN}`,
+        Authorization: request.headers.get("Authorization") || "",
       },
       body: formData,
     });

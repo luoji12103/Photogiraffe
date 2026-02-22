@@ -1,9 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ job_id: string }> }
 ) {
   const { job_id } = await params;
@@ -11,7 +10,7 @@ export async function GET(
 
   try {
     const res = await fetch(`${internalApiUrl}/api/exports/${job_id}`, {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      headers: { Authorization: request.headers.get("Authorization") || "" },
       cache: "no-store",
     });
     const data = await res.json();

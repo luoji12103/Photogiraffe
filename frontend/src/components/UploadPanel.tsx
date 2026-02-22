@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import { useAuth } from "@/context/AuthContext";
 import {
   Upload,
   X,
@@ -56,6 +57,7 @@ function formatBytes(bytes: number): string {
 
 function uploadFile(
   file: File,
+  token: string,
   onProgress: (pct: number) => void
 ): Promise<{ photo_id: number }> {
   return new Promise((resolve, reject) => {
@@ -90,6 +92,7 @@ function uploadFile(
     xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
 
     xhr.open("POST", "/api/upload");
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.send(formData);
   });
 }
@@ -98,6 +101,7 @@ function uploadFile(
 
 export default function UploadPanel() {
   const router = useRouter();
+  const { accessToken } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<UploadItem[]>([]);
@@ -140,7 +144,7 @@ export default function UploadPanel() {
     for (const item of pending) {
       updateItem(item.id, { status: "uploading", progress: 0 });
       try {
-        const result = await uploadFile(item.file, (pct) => {
+        const result = await uploadFile(item.file, accessToken || "", (pct) => {
           updateItem(item.id, { progress: pct });
         });
         updateItem(item.id, { status: "done", progress: 100, photoId: result.photo_id });

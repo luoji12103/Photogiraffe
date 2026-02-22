@@ -1,12 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const internalApiUrl = process.env.INTERNAL_API_URL || "http://go-core:8080";
   try {
     const res = await fetch(`${internalApiUrl}/api/presets`, {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      headers: { Authorization: request.headers.get("Authorization") || "" },
       cache: "no-store",
     });
     const data = await res.json();
@@ -19,7 +18,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const internalApiUrl = process.env.INTERNAL_API_URL || "http://go-core:8080";
   try {
     const body = await request.json();
@@ -27,7 +26,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${ADMIN_TOKEN}`,
+        Authorization: request.headers.get("Authorization") || "",
       },
       body: JSON.stringify(body),
     });

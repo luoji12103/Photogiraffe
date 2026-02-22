@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { Download, Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import type { AdjustParams } from "../lib/gl-renderer";
+import { useAuth } from "@/context/AuthContext";
 
 interface ExportPanelProps {
   photoId: number;
@@ -28,6 +29,7 @@ const LONG_EDGE_OPTIONS = [
 ];
 
 export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps) {
+  const { authFetch } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("jpeg");
   const [quality, setQuality] = useState(90);
@@ -42,7 +44,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
   const pollStatus = useCallback(async (id: number) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/exports/${id}`);
+        const res = await authFetch(`/api/exports/${id}`);
         if (!res.ok) return;
         const job = await res.json();
 
@@ -50,7 +52,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
           clearInterval(interval);
           setJobStatus("completed");
           // Fetch download URL
-          const dlRes = await fetch(`/api/exports/${id}/download`);
+          const dlRes = await authFetch(`/api/exports/${id}/download`);
           if (dlRes.ok) {
             const dlData = await dlRes.json();
             setDownloadUrl(dlData.url);
@@ -84,7 +86,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
     setErrorMsg("");
 
     try {
-      const res = await fetch(`/api/photos/${photoId}/export`, {
+      const res = await authFetch(`/api/photos/${photoId}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

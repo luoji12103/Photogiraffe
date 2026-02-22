@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"photogiraffe/core/auth"
 	"photogiraffe/core/database"
 	"photogiraffe/core/models"
 	"photogiraffe/core/queue"
@@ -18,18 +19,52 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
-// requireAuth checks the Authorization: Bearer <token> header.
-func requireAuth(token string) fiber.Handler {
+// requireJWT validates the Authorization: Bearer <jwt> header and writes
+// userID, userRole, username into c.Locals.
+func requireJWT() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		auth := c.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+		bearerStr := c.Get("Authorization")
+		if !strings.HasPrefix(bearerStr, "Bearer ") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing or invalid Authorization header"})
+		}
+		tokenStr := strings.TrimPrefix(bearerStr, "Bearer ")
+		claims, err := auth.ValidateAccessToken(tokenStr)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired token"})
+		}
+		c.Locals("userID", claims.UserID)
+		c.Locals("userRole", claims.Role)
+		c.Locals("username", claims.Username)
+		return c.Next()
+	}
+}
+
+// requireRole restricts access to users with one of the given roles.
+// Must be used after requireJWT.
+func requireRole(roles ...string) fiber.Handler {
+	allowed := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		allowed[r] = true
+	}
+	return func(c *fiber.Ctx) error {
+		role, _ := c.Locals("userRole").(string)
+		if !allowed[role] {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Insufficient permissions"})
 		}
 		return c.Next()
 	}
+}
+
+// userIDFromLocals extracts the authenticated user's ID from Fiber locals.
+func userIDFromLocals(c *fiber.Ctx) uint {
+	if v, ok := c.Locals("userID").(uint); ok {
+		return v
+	}
+	return 0
 }
 
 // requireInternalSecret checks the X-Internal-Secret header for worker-only routes.
@@ -43,10 +78,9 @@ func requireInternalSecret(secret string) fiber.Handler {
 }
 
 func main() {
-	// Load auth credentials from environment
-	adminToken := os.Getenv("ADMIN_TOKEN")
-	if adminToken == "" {
-		log.Fatal("ADMIN_TOKEN environment variable is not set. Refusing to start without authentication.")
+	// JWT secret — fall back to dev default but warn
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Println("WARNING: JWT_SECRET not set. Using insecure default. Set JWT_SECRET in production!")
 	}
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 	if internalSecret == "" {
@@ -60,18 +94,28 @@ func main() {
 	// Initialize Database Connection
 	database.Connect()
 
-	// Create a dummy user for testing
-	var count int64
-	database.DB.Model(&models.User{}).Count(&count)
-	if count == 0 {
-		dummyUser := models.User{
-			Username:     "testuser",
-			Email:        "test@example.com",
-			PasswordHash: "dummyhash",
-			Role:         "admin",
+	// Seed default Feature Flags if they don't exist
+	defaultFlags := []struct {
+		Name        string
+		Enabled     bool
+		Description string
+	}{
+		{"ai_analysis", false, "AI artwork analysis via multimodal LLM"},
+		{"ai_infer_params", false, "AI-powered colour parameter inference"},
+		{"export_engine", true, "Photo export engine"},
+		{"preset_management", true, "Colour preset management"},
+		{"raw_decode", true, "Browser-side RAW file decoding (libraw-wasm)"},
+		{"hdr_display", true, "Wide-gamut / HDR rendering (WebGL + ACES)"},
+	}
+	for _, f := range defaultFlags {
+		var ff models.FeatureFlag
+		if err := database.DB.Where("feature_name = ?", f.Name).First(&ff).Error; err != nil {
+			database.DB.Create(&models.FeatureFlag{
+				FeatureName: f.Name,
+				IsEnabled:   f.Enabled,
+				Description: f.Description,
+			})
 		}
-		database.DB.Create(&dummyUser)
-		fmt.Println("Created dummy user for testing.")
 	}
 
 	// Note: AutoMigrate is already performed inside database.Connect().
@@ -103,7 +147,207 @@ func main() {
 		return c.SendString("Go Core API is healthy! Database connection is active.")
 	})
 
-	app.Post("/upload", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 5 — JWT Authentication
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/auth/register — create a new user account
+	app.Post("/api/auth/register", func(c *fiber.Ctx) error {
+		var input struct {
+			Username string `json:"username"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&input); err != nil || input.Username == "" || input.Password == "" || input.Email == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "username, email and password are required"})
+		}
+
+		// First registered user becomes SuperAdmin
+		var count int64
+		database.DB.Model(&models.User{}).Count(&count)
+		role := "StandardUser"
+		if count == 0 {
+			role = "SuperAdmin"
+		}
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+		}
+
+		user := models.User{
+			Username:     input.Username,
+			Email:        input.Email,
+			PasswordHash: string(hash),
+			Role:         role,
+		}
+		if result := database.DB.Create(&user); result.Error != nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Username or email already taken"})
+		}
+
+		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
+		}
+
+		rawRefresh, hashRefresh, err := auth.GenerateRefreshToken()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate refresh token"})
+		}
+		refreshExpiry := time.Now().Add(7 * 24 * time.Hour)
+		database.DB.Create(&models.RefreshToken{
+			UserID:    user.ID,
+			TokenHash: hashRefresh,
+			ExpiresAt: refreshExpiry,
+		})
+
+		c.Cookie(&fiber.Cookie{
+			Name:     "refresh_token",
+			Value:    rawRefresh,
+			HTTPOnly: true,
+			SameSite: "Strict",
+			Expires:  refreshExpiry,
+			Path:     "/",
+		})
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"access_token": accessToken,
+			"user": fiber.Map{
+				"id":       user.ID,
+				"username": user.Username,
+				"email":    user.Email,
+				"role":     user.Role,
+			},
+		})
+	})
+
+	// POST /api/auth/login — authenticate and issue tokens
+	app.Post("/api/auth/login", func(c *fiber.Ctx) error {
+		var input struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&input); err != nil || input.Username == "" || input.Password == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "username and password are required"})
+		}
+
+		var user models.User
+		if result := database.DB.Where("username = ?", input.Username).First(&user); result.Error != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+		}
+
+		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
+		}
+
+		rawRefresh, hashRefresh, err := auth.GenerateRefreshToken()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate refresh token"})
+		}
+		refreshExpiry := time.Now().Add(7 * 24 * time.Hour)
+		database.DB.Create(&models.RefreshToken{
+			UserID:    user.ID,
+			TokenHash: hashRefresh,
+			ExpiresAt: refreshExpiry,
+		})
+
+		c.Cookie(&fiber.Cookie{
+			Name:     "refresh_token",
+			Value:    rawRefresh,
+			HTTPOnly: true,
+			SameSite: "Strict",
+			Expires:  refreshExpiry,
+			Path:     "/",
+		})
+
+		return c.JSON(fiber.Map{
+			"access_token": accessToken,
+			"user": fiber.Map{
+				"id":       user.ID,
+				"username": user.Username,
+				"email":    user.Email,
+				"role":     user.Role,
+			},
+		})
+	})
+
+	// POST /api/auth/refresh — issue new access token using refresh token cookie
+	app.Post("/api/auth/refresh", func(c *fiber.Ctx) error {
+		rawToken := c.Cookies("refresh_token")
+		if rawToken == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "No refresh token"})
+		}
+
+		hashed := auth.HashToken(rawToken)
+		var rt models.RefreshToken
+		if result := database.DB.Where("token_hash = ? AND revoked = false AND expires_at > ?", hashed, time.Now()).First(&rt); result.Error != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired refresh token"})
+		}
+
+		// Rotate: revoke old, issue new refresh token
+		database.DB.Model(&rt).Update("revoked", true)
+
+		var user models.User
+		database.DB.First(&user, rt.UserID)
+
+		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
+		}
+
+		rawNew, hashNew, err := auth.GenerateRefreshToken()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate refresh token"})
+		}
+		newExpiry := time.Now().Add(7 * 24 * time.Hour)
+		database.DB.Create(&models.RefreshToken{
+			UserID:    user.ID,
+			TokenHash: hashNew,
+			ExpiresAt: newExpiry,
+		})
+		c.Cookie(&fiber.Cookie{
+			Name:     "refresh_token",
+			Value:    rawNew,
+			HTTPOnly: true,
+			SameSite: "Strict",
+			Expires:  newExpiry,
+			Path:     "/",
+		})
+
+		return c.JSON(fiber.Map{"access_token": accessToken})
+	})
+
+	// POST /api/auth/logout — revoke current refresh token
+	app.Post("/api/auth/logout", requireJWT(), func(c *fiber.Ctx) error {
+		rawToken := c.Cookies("refresh_token")
+		if rawToken != "" {
+			hashed := auth.HashToken(rawToken)
+			database.DB.Model(&models.RefreshToken{}).Where("token_hash = ?", hashed).Update("revoked", true)
+		}
+		c.ClearCookie("refresh_token")
+		return c.JSON(fiber.Map{"message": "Logged out"})
+	})
+
+	// GET /api/auth/me — return current user profile
+	app.Get("/api/auth/me", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var user models.User
+		if result := database.DB.First(&user, uid); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		return c.JSON(fiber.Map{
+			"id":       user.ID,
+			"username": user.Username,
+			"email":    user.Email,
+			"role":     user.Role,
+		})
+	})
+
+	app.Post("/upload", requireJWT(), func(c *fiber.Ctx) error {
 		// Parse the multipart form
 		file, err := c.FormFile("image")
 		if err != nil {
@@ -138,7 +382,7 @@ func main() {
 
 		// Create a record in PostgreSQL
 		photo := models.Photo{
-			UserID:           1, // Hardcoded for now, should come from JWT
+		UserID:           userIDFromLocals(c),
 			OriginalFilename: file.Filename,
 			MinioPath:        objectName,
 			Status:           "processing",
@@ -234,7 +478,7 @@ func main() {
 	})
 
 	// API to get AI Config
-	app.Get("/api/config/ai", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Get("/api/config/ai", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var config models.AIConfig
 		result := database.DB.First(&config)
 		if result.Error != nil {
@@ -249,7 +493,7 @@ func main() {
 	})
 
 	// API to update AI Config
-	app.Post("/api/config/ai", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Post("/api/config/ai", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var input models.AIConfig
 		if err := c.BodyParser(&input); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
@@ -280,7 +524,7 @@ func main() {
 	})
 
 	// API to trigger AI Analysis
-	app.Post("/api/photos/:id/analyze", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Post("/api/photos/:id/analyze", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		var photo models.Photo
 		result := database.DB.First(&photo, id)
@@ -347,7 +591,7 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// POST /api/photos/:id/infer-params — trigger AI parameter inference
-	app.Post("/api/photos/:id/infer-params", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Post("/api/photos/:id/infer-params", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		var photo models.Photo
 		result := database.DB.First(&photo, id)
@@ -408,7 +652,7 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// POST /api/presets — save a named preset
-	app.Post("/api/presets", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Post("/api/presets", requireJWT(), func(c *fiber.Ctx) error {
 		var input struct {
 			Name         string `json:"name"`
 			Description  string `json:"description"`
@@ -430,7 +674,7 @@ func main() {
 		}
 
 		preset := models.Preset{
-			UserID:       1, // hardcoded until JWT
+			UserID:       userIDFromLocals(c),
 			Name:         input.Name,
 			Description:  input.Description,
 			AdjustParams: input.AdjustParams,
@@ -442,14 +686,14 @@ func main() {
 	})
 
 	// GET /api/presets — list presets
-	app.Get("/api/presets", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Get("/api/presets", requireJWT(), func(c *fiber.Ctx) error {
 		var presets []models.Preset
 		database.DB.Order("created_at desc").Find(&presets)
 		return c.JSON(presets)
 	})
 
 	// DELETE /api/presets/:id — delete a preset
-	app.Delete("/api/presets/:id", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Delete("/api/presets/:id", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		var preset models.Preset
 		if result := database.DB.First(&preset, id); result.Error != nil {
@@ -464,7 +708,7 @@ func main() {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	// POST /api/photos/:id/export — create export job and push to queue
-	app.Post("/api/photos/:id/export", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Post("/api/photos/:id/export", requireJWT(), func(c *fiber.Ctx) error {
 		photoID, err := c.ParamsInt("id")
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
@@ -491,7 +735,7 @@ func main() {
 
 		job := models.ExportJob{
 			PhotoID:       uint(photoID),
-			UserID:        1, // hardcoded until JWT is implemented
+			UserID:        userIDFromLocals(c),
 			Status:        "pending",
 			ExportOptions: string(optsRaw),
 		}
@@ -512,7 +756,7 @@ func main() {
 	})
 
 	// GET /api/photos/:id/exports — list export jobs for a photo
-	app.Get("/api/photos/:id/exports", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Get("/api/photos/:id/exports", requireJWT(), func(c *fiber.Ctx) error {
 		photoID := c.Params("id")
 		var jobs []models.ExportJob
 		database.DB.Where("photo_id = ?", photoID).Order("created_at desc").Find(&jobs)
@@ -520,7 +764,7 @@ func main() {
 	})
 
 	// GET /api/exports/:job_id — query single export job status
-	app.Get("/api/exports/:job_id", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Get("/api/exports/:job_id", requireJWT(), func(c *fiber.Ctx) error {
 		jobID := c.Params("job_id")
 		var job models.ExportJob
 		if result := database.DB.First(&job, jobID); result.Error != nil {
@@ -530,7 +774,7 @@ func main() {
 	})
 
 	// GET /api/exports/:job_id/download — generate presigned download URL
-	app.Get("/api/exports/:job_id/download", requireAuth(adminToken), func(c *fiber.Ctx) error {
+	app.Get("/api/exports/:job_id/download", requireJWT(), func(c *fiber.Ctx) error {
 		jobID := c.Params("job_id")
 		var job models.ExportJob
 		if result := database.DB.First(&job, jobID); result.Error != nil {

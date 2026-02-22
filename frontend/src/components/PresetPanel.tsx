@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Bookmark, BookmarkCheck, Trash2, ChevronDown, ChevronUp, Plus, Loader2 } from "lucide-react";
 import type { AdjustParams } from "../lib/gl-renderer";
+import { useAuth } from "@/context/AuthContext";
 
 interface PresetRecord {
   ID: number;
@@ -26,6 +27,7 @@ function parseAdjust(raw: string): AdjustParams | null {
 }
 
 export default function PresetPanel({ params, onApply }: PresetPanelProps) {
+  const { authFetch } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [presets, setPresets] = useState<PresetRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,7 @@ export default function PresetPanel({ params, onApply }: PresetPanelProps) {
   const fetchPresets = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/presets");
+      const res = await authFetch("/api/presets");
       if (res.ok) {
         const data = await res.json();
         setPresets(Array.isArray(data) ? data : []);
@@ -61,7 +63,7 @@ export default function PresetPanel({ params, onApply }: PresetPanelProps) {
   };
 
   const handleDelete = async (id: number) => {
-    const res = await fetch(`/api/presets/${id}`, { method: "DELETE" });
+    const res = await authFetch(`/api/presets/${id}`, { method: "DELETE" });
     if (res.ok) {
       setPresets((prev) => prev.filter((p) => p.ID !== id));
       if (appliedId === id) setAppliedId(null);
@@ -72,7 +74,7 @@ export default function PresetPanel({ params, onApply }: PresetPanelProps) {
     if (!newName.trim()) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/presets", {
+      const res = await authFetch("/api/presets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

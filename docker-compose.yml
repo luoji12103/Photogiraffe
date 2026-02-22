@@ -53,8 +53,8 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
       - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
+      - JWT_SECRET=${JWT_SECRET:-photogiraffe_jwt_secret_change_me_in_prod}
       - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
     depends_on:
       - postgres
@@ -93,7 +93,6 @@ services:
       - MINIO_INTERNAL_URL=http://minio:9000
       - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
       - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN must be set}
     depends_on:
       - go-core
     restart: unless-stopped

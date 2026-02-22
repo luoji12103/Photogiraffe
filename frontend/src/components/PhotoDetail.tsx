@@ -7,6 +7,7 @@ import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette,
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
+import { useAuth } from "@/context/AuthContext";
 import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
@@ -60,6 +61,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
   const display = useDisplayDetect();
+  const { authFetch } = useAuth();
 
   const handleClose = () => {
     // router.back() closes the intercepting modal and returns to gallery;
@@ -101,14 +103,14 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
     setInferError("");
     setInferredSuggestion(null);
     try {
-      const res = await fetch(`/api/photos/${photo.ID}/infer-params`, { method: "POST" });
+      const res = await authFetch(`/api/photos/${photo.ID}/infer-params`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to trigger param inference");
       }
       // Poll until InferredParams is populated
       const poll = setInterval(async () => {
-        const checkRes = await fetch(`/api/photos/${photo.ID}`);
+        const checkRes = await authFetch(`/api/photos/${photo.ID}`);
         if (checkRes.ok) {
           const updated = await checkRes.json();
           if (updated.InferredParams) {
@@ -148,7 +150,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
     setIsAnalyzing(true);
     setAnalysisError("");
     try {
-      const res = await fetch(`/api/photos/${photo.ID}/analyze`, {
+      const res = await authFetch(`/api/photos/${photo.ID}/analyze`, {
         method: "POST",
       });
       
@@ -159,7 +161,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       
       // Poll for results
       const pollInterval = setInterval(async () => {
-        const checkRes = await fetch(`/api/photos/${photo.ID}`);
+        const checkRes = await authFetch(`/api/photos/${photo.ID}`);
         if (checkRes.ok) {
           const updatedPhoto = await checkRes.json();
           if (updatedPhoto.AIAnalysis) {

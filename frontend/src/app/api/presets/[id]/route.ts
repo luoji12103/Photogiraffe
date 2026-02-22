@@ -1,9 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 export async function DELETE(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -11,7 +10,7 @@ export async function DELETE(
   try {
     const res = await fetch(`${internalApiUrl}/api/presets/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+      headers: { Authorization: request.headers.get("Authorization") || "" },
     });
     const data = await res.json();
     if (!res.ok) {

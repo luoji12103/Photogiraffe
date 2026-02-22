@@ -79,3 +79,12 @@ type Preset struct {
 	Description  string
 	AdjustParams string `gorm:"type:jsonb;not null"` // serialized AdjustParams JSON
 }
+
+// RefreshToken keeps a hashed record of an issued refresh token.
+type RefreshToken struct {
+	gorm.Model
+	UserID    uint      `gorm:"not null;index"`
+	TokenHash string    `gorm:"not null;uniqueIndex"` // SHA-256 hex of the raw token
+	ExpiresAt time.Time `gorm:"not null"`
+	Revoked   bool      `gorm:"default:false"`
+}
