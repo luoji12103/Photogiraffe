@@ -1,5 +1,10 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import PhotoDetail from "@/components/PhotoDetail";
-import { notFound } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import { Loader2 } from "lucide-react";
 
 interface ExifData {
   CameraModel: string;
@@ -25,34 +30,35 @@ interface Photo {
   ExifData?: ExifData;
 }
 
-async function getPhoto(id: string): Promise<Photo | null> {
-  const apiUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-  try {
-    const res = await fetch(`${apiUrl}/photos/${id}`, { cache: "no-store" });
-    if (!res.ok) {
-      if (res.status === 404) return null;
-      throw new Error("Failed to fetch photo");
-    }
-    return res.json();
-  } catch (error) {
-    console.error(error);
-    return null;
-  }
-}
+export default function PhotoPage() {
+  const params = useParams<{ id: string }>();
+  const { authFetch } = useAuth();
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export default async function PhotoPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const photo = await getPhoto(id);
+  useEffect(() => {
+    authFetch(`/api/photos/${params.id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setPhoto(data))
+      .finally(() => setLoading(false));
+  }, [params.id, authFetch]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+      </div>
+    );
+  }
 
   if (!photo) {
-    notFound();
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">
+        Photo not found.
+      </div>
+    );
   }
 
-  // B6 fix: minioUrl was declared but PhotoDetail uses /api/image proxy directly.
   return (
     <div className="min-h-screen bg-zinc-950">
       <PhotoDetail photo={photo} />

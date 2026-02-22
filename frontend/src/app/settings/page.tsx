@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Save, Loader2, ArrowLeft, ChevronDown } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import AuthGuard from "@/components/AuthGuard";
 
 // ─── Provider catalogue ───────────────────────────────────────────────────────
 
@@ -58,6 +60,7 @@ interface AIConfig {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const { authFetch } = useAuth();
   const [config, setConfig] = useState<AIConfig>({
     Provider: "openai",
     BaseURL: "",
@@ -75,7 +78,7 @@ export default function SettingsPage() {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch("/api/config/ai");
+      const res = await authFetch("/api/config/ai");
       if (res.ok) {
         const data = await res.json();
         if (data.APIKey) {
@@ -110,7 +113,7 @@ export default function SettingsPage() {
     setIsSaving(true);
     setMessage({ text: "", type: "" });
     try {
-      const res = await fetch("/api/config/ai", {
+      const res = await authFetch("/api/config/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
@@ -139,6 +142,7 @@ export default function SettingsPage() {
   const currentProvider = PROVIDERS[config.Provider] ?? PROVIDERS["openai_compatible"];
 
   return (
+    <AuthGuard adminOnly>
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans p-8">
       <div className="max-w-2xl mx-auto">
         <header className="mb-10 flex items-center gap-4">
@@ -292,6 +296,7 @@ export default function SettingsPage() {
         </form>
       </div>
     </div>
+    </AuthGuard>
   );
 }
 

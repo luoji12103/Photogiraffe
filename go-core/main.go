@@ -457,22 +457,32 @@ func main() {
 	})
 
 	// API to get list of photos
-	app.Get("/photos", func(c *fiber.Ctx) error {
+	app.Get("/photos", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var photos []models.Photo
-		result := database.DB.Preload("ExifData").Order("uploaded_at desc").Find(&photos)
-		if result.Error != nil {
+		query := database.DB.Preload("ExifData").Order("uploaded_at desc")
+		if role != "SuperAdmin" {
+			query = query.Where("user_id = ?", uid)
+		}
+		if result := query.Find(&photos); result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
 		}
 		return c.JSON(photos)
 	})
 
 	// API to get a single photo by ID
-	app.Get("/photos/:id", func(c *fiber.Ctx) error {
+	app.Get("/photos/:id", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var photo models.Photo
 		result := database.DB.Preload("ExifData").First(&photo, id)
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		return c.JSON(photo)
 	})
@@ -526,10 +536,15 @@ func main() {
 	// API to trigger AI Analysis
 	app.Post("/api/photos/:id/analyze", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var photo models.Photo
 		result := database.DB.First(&photo, id)
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		// B4 fix: only allow AI analysis on successfully processed photos;
 		// otherwise the worker would fail because the proxy image doesn't exist.
@@ -593,10 +608,15 @@ func main() {
 	// POST /api/photos/:id/infer-params — trigger AI parameter inference
 	app.Post("/api/photos/:id/infer-params", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var photo models.Photo
 		result := database.DB.First(&photo, id)
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		if photo.Status != "completed" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
@@ -687,17 +707,28 @@ func main() {
 
 	// GET /api/presets — list presets
 	app.Get("/api/presets", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var presets []models.Preset
-		database.DB.Order("created_at desc").Find(&presets)
+		query := database.DB.Order("created_at desc")
+		if role != "SuperAdmin" {
+			query = query.Where("user_id = ?", uid)
+		}
+		query.Find(&presets)
 		return c.JSON(presets)
 	})
 
 	// DELETE /api/presets/:id — delete a preset
 	app.Delete("/api/presets/:id", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var preset models.Preset
 		if result := database.DB.First(&preset, id); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Preset not found"})
+		}
+		if role != "SuperAdmin" && preset.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		database.DB.Delete(&preset)
 		return c.JSON(fiber.Map{"message": "Preset deleted"})
@@ -758,6 +789,16 @@ func main() {
 	// GET /api/photos/:id/exports — list export jobs for a photo
 	app.Get("/api/photos/:id/exports", requireJWT(), func(c *fiber.Ctx) error {
 		photoID := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		// Verify photo ownership before listing its exports
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
 		var jobs []models.ExportJob
 		database.DB.Where("photo_id = ?", photoID).Order("created_at desc").Find(&jobs)
 		return c.JSON(jobs)
@@ -766,9 +807,14 @@ func main() {
 	// GET /api/exports/:job_id — query single export job status
 	app.Get("/api/exports/:job_id", requireJWT(), func(c *fiber.Ctx) error {
 		jobID := c.Params("job_id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var job models.ExportJob
 		if result := database.DB.First(&job, jobID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+		if role != "SuperAdmin" && job.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		return c.JSON(job)
 	})
@@ -776,9 +822,14 @@ func main() {
 	// GET /api/exports/:job_id/download — generate presigned download URL
 	app.Get("/api/exports/:job_id/download", requireJWT(), func(c *fiber.Ctx) error {
 		jobID := c.Params("job_id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		var job models.ExportJob
 		if result := database.DB.First(&job, jobID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+		if role != "SuperAdmin" && job.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		if job.Status != "completed" || job.OutputPath == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Export is not ready yet"})

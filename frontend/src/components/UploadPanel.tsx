@@ -99,7 +99,7 @@ function uploadFile(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function UploadPanel() {
+export default function UploadPanel({ onUploadComplete }: { onUploadComplete?: () => void } = {}) {
   const router = useRouter();
   const { accessToken } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -155,6 +155,7 @@ export default function UploadPanel() {
     }
 
     setUploading(false);
+    onUploadComplete?.();
   };
 
   // Close panel and refresh gallery
