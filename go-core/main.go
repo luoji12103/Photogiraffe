@@ -382,7 +382,7 @@ func main() {
 
 		// Create a record in PostgreSQL
 		photo := models.Photo{
-		UserID:           userIDFromLocals(c),
+			UserID:           userIDFromLocals(c),
 			OriginalFilename: file.Filename,
 			MinioPath:        objectName,
 			Status:           "processing",
@@ -456,19 +456,59 @@ func main() {
 		return c.JSON(fiber.Map{"message": "Status updated successfully"})
 	})
 
-	// API to get list of photos
+	// API to get list of photos — supports pagination, search, status filter
+	// Query params: page (default 1), limit (default 20, max 100), search (filename), status (processing|completed|failed)
 	app.Get("/photos", requireJWT(), func(c *fiber.Ctx) error {
 		uid := userIDFromLocals(c)
 		role := c.Locals("userRole").(string)
-		var photos []models.Photo
-		query := database.DB.Preload("ExifData").Order("uploaded_at desc")
-		if role != "SuperAdmin" {
-			query = query.Where("user_id = ?", uid)
+
+		// Pagination params
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
 		}
-		if result := query.Find(&photos); result.Error != nil {
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		// Filter params
+		search := strings.TrimSpace(c.Query("search", ""))
+		statusFilter := strings.TrimSpace(c.Query("status", ""))
+
+		// Build base query with ownership check
+		base := database.DB.Model(&models.Photo{})
+		if role != "SuperAdmin" {
+			base = base.Where("user_id = ?", uid)
+		}
+		if search != "" {
+			base = base.Where("original_filename ILIKE ?", "%"+search+"%")
+		}
+		if statusFilter != "" {
+			base = base.Where("status = ?", statusFilter)
+		}
+
+		// Get total count
+		var total int64
+		if err := base.Count(&total).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count photos"})
+		}
+
+		// Fetch page
+		var photos []models.Photo
+		if result := base.Preload("ExifData").Order("uploaded_at desc").
+			Limit(limit).Offset(offset).Find(&photos); result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
 		}
-		return c.JSON(photos)
+
+		return c.JSON(fiber.Map{
+			"photos":     photos,
+			"total":      total,
+			"page":       page,
+			"limit":      limit,
+			"total_pages": int((total + int64(limit) - 1) / int64(limit)),
+		})
 	})
 
 	// API to get a single photo by ID
@@ -511,7 +551,7 @@ func main() {
 
 		var config models.AIConfig
 		result := database.DB.First(&config)
-		
+
 		if result.Error != nil {
 			if result.Error == gorm.ErrRecordNotFound {
 				// Create new config
@@ -854,8 +894,8 @@ func main() {
 		jobID := c.Params("job_id")
 
 		var input struct {
-			Status      string `json:"status"`
-			OutputPath  string `json:"output_path,omitempty"`
+			Status       string `json:"status"`
+			OutputPath   string `json:"output_path,omitempty"`
 			ErrorMessage string `json:"error_message,omitempty"`
 		}
 		if err := c.BodyParser(&input); err != nil {
@@ -869,8 +909,8 @@ func main() {
 
 		now := time.Now()
 		updates := map[string]interface{}{
-			"status":       input.Status,
-			"output_path":  input.OutputPath,
+			"status":        input.Status,
+			"output_path":   input.OutputPath,
 			"error_message": input.ErrorMessage,
 		}
 		if input.Status == "completed" || input.Status == "failed" {
