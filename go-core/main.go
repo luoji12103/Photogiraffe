@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -339,6 +340,133 @@ func main() {
 		database.DB.Save(&photo)
 
 		return c.JSON(fiber.Map{"message": "AI analysis updated successfully"})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 4 — Export Engine
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/photos/:id/export — create export job and push to queue
+	app.Post("/api/photos/:id/export", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if photo.Status != "completed" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
+		}
+
+		// Parse export options from request body (permissive: use raw JSON)
+		optsRaw := c.Body()
+		if len(optsRaw) == 0 {
+			optsRaw = []byte("{}")
+		}
+		// Validate it's valid JSON
+		var optCheck map[string]interface{}
+		if err := json.Unmarshal(optsRaw, &optCheck); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid export options JSON"})
+		}
+
+		job := models.ExportJob{
+			PhotoID:       uint(photoID),
+			UserID:        1, // hardcoded until JWT is implemented
+			Status:        "pending",
+			ExportOptions: string(optsRaw),
+		}
+		if result := database.DB.Create(&job); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create export job"})
+		}
+
+		if err := queue.PublishExportTask(job.ID, uint(photoID), string(optsRaw)); err != nil {
+			// Mark job as failed if we can't queue it
+			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue export task"})
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"message": "Export job created",
+			"job_id":  job.ID,
+		})
+	})
+
+	// GET /api/photos/:id/exports — list export jobs for a photo
+	app.Get("/api/photos/:id/exports", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		photoID := c.Params("id")
+		var jobs []models.ExportJob
+		database.DB.Where("photo_id = ?", photoID).Order("created_at desc").Find(&jobs)
+		return c.JSON(jobs)
+	})
+
+	// GET /api/exports/:job_id — query single export job status
+	app.Get("/api/exports/:job_id", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		jobID := c.Params("job_id")
+		var job models.ExportJob
+		if result := database.DB.First(&job, jobID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+		return c.JSON(job)
+	})
+
+	// GET /api/exports/:job_id/download — generate presigned download URL
+	app.Get("/api/exports/:job_id/download", requireAuth(adminToken), func(c *fiber.Ctx) error {
+		jobID := c.Params("job_id")
+		var job models.ExportJob
+		if result := database.DB.First(&job, jobID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+		if job.Status != "completed" || job.OutputPath == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Export is not ready yet"})
+		}
+
+		presignExpiry := 15 * time.Minute
+		presignedURL, err := storage.MinioClient.PresignedGetObject(
+			c.Context(), "photos", job.OutputPath, presignExpiry, nil,
+		)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate download URL"})
+		}
+
+		return c.JSON(fiber.Map{
+			"url":        presignedURL.String(),
+			"expires_in": int(presignExpiry.Seconds()),
+		})
+	})
+
+	// PUT /internal/exports/:job_id/status — Python Worker updates export job status
+	app.Put("/internal/exports/:job_id/status", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		jobID := c.Params("job_id")
+
+		var input struct {
+			Status      string `json:"status"`
+			OutputPath  string `json:"output_path,omitempty"`
+			ErrorMessage string `json:"error_message,omitempty"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var job models.ExportJob
+		if result := database.DB.First(&job, jobID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+
+		now := time.Now()
+		updates := map[string]interface{}{
+			"status":       input.Status,
+			"output_path":  input.OutputPath,
+			"error_message": input.ErrorMessage,
+		}
+		if input.Status == "completed" || input.Status == "failed" {
+			updates["completed_at"] = &now
+		}
+		database.DB.Model(&job).Updates(updates)
+
+		return c.JSON(fiber.Map{"message": "Export job status updated"})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

@@ -10,6 +10,7 @@ import { useDisplayDetect } from "../lib/display-detect";
 import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
+import ExportPanel from "./ExportPanel";
 
 interface ExifData {
   CameraModel: string;
@@ -314,6 +315,9 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
           {/* Adjustment Sliders */}
           <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
+
+          {/* Export Engine */}
+          <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
 
           <div className="h-px bg-zinc-800 my-6" />
 

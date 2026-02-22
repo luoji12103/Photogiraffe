@@ -6,6 +6,8 @@ import requests
 import base64
 from io import BytesIO
 from PIL import Image, ImageCms
+import numpy as np
+import piexif
 import redis
 from minio import Minio
 from pillow_heif import register_heif_opener
@@ -103,6 +105,7 @@ PROVIDER_BASE_URLS = {
 
 STREAM_NAME = "image_processing_queue"
 AI_STREAM_NAME = "ai_analysis_queue"
+EXPORT_STREAM_NAME = "export_queue"
 GROUP_NAME = "python_workers"
 CONSUMER_NAME = "worker_1"
 
@@ -118,6 +121,13 @@ def init_redis():
     try:
         r.xgroup_create(AI_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
         logger.info(f"Created consumer group {GROUP_NAME} for stream {AI_STREAM_NAME}")
+    except redis.exceptions.ResponseError as e:
+        if "BUSYGROUP Consumer Group name already exists" not in str(e):
+            logger.error(f"Error creating consumer group: {e}")
+
+    try:
+        r.xgroup_create(EXPORT_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        logger.info(f"Created consumer group {GROUP_NAME} for stream {EXPORT_STREAM_NAME}")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP Consumer Group name already exists" not in str(e):
             logger.error(f"Error creating consumer group: {e}")
@@ -406,6 +416,225 @@ def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, m
         return False
 
 
+def _apply_adjust_params(img: Image.Image, opts: dict) -> Image.Image:
+    """
+    Apply colour-adjustment parameters (mirroring the WebGL pipeline) via NumPy.
+    Parameters come from the 'adjust' key in ExportOptions.
+    """
+    adjust = opts.get("adjust", {})
+    exposure   = float(adjust.get("exposure",   0.0))
+    brightness = float(adjust.get("brightness", 0.0))
+    contrast   = float(adjust.get("contrast",   0.0))
+    saturation = float(adjust.get("saturation", 1.0))
+    tonemap    = bool(adjust.get("tonemap",     False))
+
+    if exposure == 0 and brightness == 0 and contrast == 0 and saturation == 1.0 and not tonemap:
+        return img  # no-op fast path
+
+    img = img.convert("RGB")
+    arr = np.array(img, dtype=np.float32) / 255.0  # [0,1] sRGB
+
+    # sRGB → linear
+    linear = np.power(np.clip(arr, 1e-6, None), 2.2)
+
+    # 1. Exposure (multiplicative, linear space, mirrors pow(2.0, u_exposure))
+    linear *= (2.0 ** exposure)
+
+    # 2. Brightness (additive offset, clamped [0,4])
+    linear = np.clip(linear + brightness * 0.5, 0.0, 4.0)
+
+    # 3. Contrast (pivot at 0.18 middle grey, mirrors mix(0.18, linear, contrast+1))
+    linear = np.clip(0.18 + (contrast + 1.0) * (linear - 0.18), 0.0, 4.0)
+
+    # 4. Saturation (Rec.709 luma-preserving mix)
+    rec709 = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    luma = (linear * rec709).sum(axis=2, keepdims=True)
+    linear = luma + saturation * (linear - luma)
+
+    # 5. Optional ACES filmic tone mapping
+    if tonemap:
+        a, b, c2, d, e = 2.51, 0.03, 2.43, 0.59, 0.14
+        linear = np.clip((linear * (a * linear + b)) / (linear * (c2 * linear + d) + e), 0.0, 1.0)
+
+    # linear → sRGB
+    srgb_out = np.power(np.clip(linear, 1e-6, 1.0), 1.0 / 2.2)
+    return Image.fromarray((srgb_out * 255).astype(np.uint8), mode="RGB")
+
+
+def _apply_watermark(img: Image.Image, minio_client, watermark_path: str,
+                     opacity: float, position: str) -> Image.Image:
+    """Overlay a PNG watermark onto img. Returns original on any error."""
+    try:
+        resp = minio_client.get_object("photos", watermark_path)
+        wm_data = resp.read()
+        resp.close(); resp.release_conn()
+
+        wm = Image.open(BytesIO(wm_data)).convert("RGBA")
+
+        # Scale watermark to at most 25% of image long edge
+        scale = min(1.0, (max(img.size) * 0.25) / max(wm.size))
+        if scale < 1.0:
+            new_w = int(wm.width * scale)
+            new_h = int(wm.height * scale)
+            wm = wm.resize((new_w, new_h), Image.LANCZOS)
+
+        # Apply opacity via alpha channel
+        r, g, b, a = wm.split()
+        a = a.point(lambda x: int(x * opacity))
+        wm.putalpha(a)
+
+        # Determine position (bottom_right default)
+        margin = 20
+        iw, ih = img.size
+        ww, wh = wm.size
+        positions = {
+            "bottom_right": (iw - ww - margin, ih - wh - margin),
+            "bottom_left":  (margin, ih - wh - margin),
+            "top_right":    (iw - ww - margin, margin),
+            "top_left":     (margin, margin),
+            "center":       ((iw - ww) // 2, (ih - wh) // 2),
+        }
+        pos = positions.get(position, positions["bottom_right"])
+
+        out = img.convert("RGBA")
+        out.paste(wm, pos, mask=wm)
+        return out.convert("RGB")
+    except Exception as e:
+        logger.warning(f"Watermark overlay failed ({e}); skipping watermark")
+        return img
+
+
+def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str) -> bool:
+    """
+    Export pipeline:
+      download → decode → adjust → resize → watermark → EXIF → upload → notify
+    """
+    bucket = "photos"
+    try:
+        opts = json.loads(opts_json) if opts_json else {}
+        fmt        = opts.get("format",   "jpeg").lower()
+        quality    = int(opts.get("quality",   85))
+        long_edge  = int(opts.get("long_edge",  0))
+        width      = int(opts.get("width",      0))
+        height     = int(opts.get("height",     0))
+        wm_path    = opts.get("watermark_path", "")
+        wm_opacity = float(opts.get("watermark_opacity",  0.6))
+        wm_pos     = opts.get("watermark_position", "bottom_right")
+        embed_exif = bool(opts.get("embed_exif", True))
+
+        # Mark job as processing
+        _update_export_status(job_id, "processing")
+
+        # 1. Fetch photo record from Go Core (to get minio_path)
+        photo_res = requests.get(f"{GO_CORE_URL}/photos/{photo_id}", timeout=10)
+        photo_res.raise_for_status()
+        photo = photo_res.json()
+        minio_path = photo["MinioPath"]
+
+        logger.info(f"[export:{job_id}] Downloading {minio_path}...")
+        response = minio_client.get_object(bucket, minio_path)
+        img_data = response.read()
+        response.close(); response.release_conn()
+
+        # 2. Decode image
+        is_raw = minio_path.lower().endswith(('.arw', '.cr2', '.cr3', '.nef', '.dng',
+                                               '.raf', '.orf', '.rw2', '.hif'))
+        if is_raw:
+            with rawpy.imread(BytesIO(img_data)) as raw:
+                rgb = raw.postprocess(use_camera_wb=True)
+            img = Image.fromarray(rgb)
+        else:
+            img = Image.open(BytesIO(img_data))
+
+        # Preserve original EXIF bytes for re-injection
+        orig_exif_bytes = img.info.get("exif", None)
+
+        img = img.convert("RGB")
+
+        # 3. Apply colour adjustments (mirrors WebGL pipeline)
+        img = _apply_adjust_params(img, opts)
+
+        # 4. Resize
+        iw, ih = img.size
+        if long_edge > 0:
+            scale = long_edge / max(iw, ih)
+            if scale < 1.0:
+                img = img.resize((int(iw * scale), int(ih * scale)), Image.LANCZOS)
+        elif width > 0 and height > 0:
+            img = img.resize((
+                min(width,  8000),
+                min(height, 8000)
+            ), Image.LANCZOS)
+
+        # 5. Watermark
+        if wm_path:
+            img = _apply_watermark(img, minio_client, wm_path, wm_opacity, wm_pos)
+
+        # 6. Prepare output bytes
+        out_buf = BytesIO()
+        pil_fmt = {"jpeg": "JPEG", "jpg": "JPEG", "png": "PNG",
+                   "webp": "WEBP", "tiff": "TIFF"}.get(fmt, "JPEG")
+        save_kwargs: dict = {}
+
+        if pil_fmt == "JPEG":
+            save_kwargs["quality"]   = quality
+            save_kwargs["subsampling"] = 0  # 4:4:4
+
+            if embed_exif and orig_exif_bytes:
+                try:
+                    exif_dict  = piexif.load(orig_exif_bytes)
+                    save_kwargs["exif"] = piexif.dump(exif_dict)
+                except Exception as ex:
+                    logger.warning(f"[export:{job_id}] EXIF re-injection failed: {ex}")
+        elif pil_fmt == "PNG":
+            save_kwargs["compress_level"] = max(0, min(9, 9 - quality // 11))
+        elif pil_fmt == "WEBP":
+            save_kwargs["quality"] = quality
+
+        img.save(out_buf, format=pil_fmt, **save_kwargs)
+        out_buf.seek(0)
+        out_size = out_buf.getbuffer().nbytes
+
+        # 7. Upload to MinIO under export/ prefix
+        ext_map = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp", "TIFF": "tiff"}
+        ext = ext_map.get(pil_fmt, "jpg")
+        output_path = f"export/{job_id}.{ext}"
+        content_type_map = {"JPEG": "image/jpeg", "PNG": "image/png",
+                             "WEBP": "image/webp", "TIFF": "image/tiff"}
+        content_type = content_type_map.get(pil_fmt, "application/octet-stream")
+
+        minio_client.put_object(
+            bucket, output_path, out_buf, out_size,
+            content_type=content_type
+        )
+        logger.info(f"[export:{job_id}] Uploaded {output_path} ({out_size} bytes)")
+
+        # 8. Notify Go Core of completion
+        _update_export_status(job_id, "completed", output_path=output_path)
+        return True
+
+    except Exception as e:
+        logger.error(f"[export:{job_id}] Export failed: {e}", exc_info=True)
+        _update_export_status(job_id, "failed", error_message=str(e))
+        return False
+
+
+def _update_export_status(job_id: str, status: str,
+                          output_path: str = "", error_message: str = "") -> None:
+    url = f"{GO_CORE_URL}/internal/exports/{job_id}/status"
+    payload = {"status": status}
+    if output_path:
+        payload["output_path"] = output_path
+    if error_message:
+        payload["error_message"] = error_message
+    try:
+        res = requests.put(url, json=payload,
+                           headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=10)
+        res.raise_for_status()
+    except Exception as e:
+        logger.warning(f"[export:{job_id}] Failed to update status to {status}: {e}")
+
+
 def main():
     logger.info("Python Worker starting...")
     
@@ -419,7 +648,9 @@ def main():
     while True:
         try:
             # Read from Redis Streams
-            messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME, {STREAM_NAME: ">", AI_STREAM_NAME: ">"}, count=1, block=5000)
+            messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME,
+                                    {STREAM_NAME: ">", AI_STREAM_NAME: ">", EXPORT_STREAM_NAME: ">"},
+                                    count=1, block=5000)
             
             if not messages:
                 continue
@@ -459,6 +690,20 @@ def main():
                         else:
                             logger.warning(f"Invalid message data for AI analysis: {message_data}")
                             r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
+
+                    elif stream == EXPORT_STREAM_NAME:
+                        job_id    = message_data.get("job_id")
+                        photo_id  = message_data.get("photo_id")
+                        opts_json = message_data.get("export_options", "{}")
+
+                        if job_id and photo_id:
+                            success = process_export_task(minio_client, job_id, photo_id, opts_json)
+                        else:
+                            logger.warning(f"Invalid export message data: {message_data}")
+                            success = True  # ACK anyway to clear bad message
+
+                        r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
+                        logger.info(f"Acknowledged export message {message_id} (success={success})")
 
         except Exception as e:
             logger.error(f"Error in worker loop: {e}")

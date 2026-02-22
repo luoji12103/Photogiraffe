@@ -5,6 +5,8 @@ requests
 pillow-heif
 exifread
 rawpy
+numpy
+piexif
 openai
 google-genai
 anthropic

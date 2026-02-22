@@ -57,3 +57,15 @@ type AIConfig struct {
 	APIKey    string `gorm:"not null"`
 	ModelName string `gorm:"not null"`
 }
+
+// ExportJob tracks a photo export request through the pipeline.
+type ExportJob struct {
+	gorm.Model
+	PhotoID       uint       `gorm:"not null;index"`
+	UserID        uint       `gorm:"not null;index"`
+	Status        string     `gorm:"default:'pending'"` // pending | processing | completed | failed
+	ExportOptions string     `gorm:"type:jsonb"`        // serialized ExportOptions JSON
+	OutputPath    string     // MinIO path of the exported file (set when completed)
+	ErrorMessage  string     // error detail (set when failed)
+	CompletedAt   *time.Time // nullable; set when status transitions to completed/failed
+}

@@ -65,3 +65,12 @@ func PushTask(streamName string, values map[string]interface{}) error {
 	fmt.Printf("Successfully published task to %s\n", streamName)
 	return nil
 }
+
+// PublishExportTask pushes an export job onto the export_queue Redis Stream.
+func PublishExportTask(jobID uint, photoID uint, optsJSON string) error {
+	return PushTask("export_queue", map[string]interface{}{
+		"job_id":         jobID,
+		"photo_id":       photoID,
+		"export_options": optsJSON,
+	})
+}
