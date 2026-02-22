@@ -9,8 +9,11 @@ interface AdjustPanelProps {
   onChange: (params: AdjustParams) => void;
 }
 
+/** Keys of AdjustParams that are numeric (used in sliders; excludes boolean fields) */
+type NumericAdjustKey = "exposure" | "brightness" | "contrast" | "saturation";
+
 interface SliderDef {
-  key: keyof AdjustParams;
+  key: NumericAdjustKey;
   label: string;
   icon: React.ReactNode;
   min: number;
@@ -68,23 +71,28 @@ export default function AdjustPanel({ params, onChange }: AdjustPanelProps) {
     params.exposure === DEFAULT_ADJUST.exposure &&
     params.brightness === DEFAULT_ADJUST.brightness &&
     params.contrast === DEFAULT_ADJUST.contrast &&
-    params.saturation === DEFAULT_ADJUST.saturation;
+    params.saturation === DEFAULT_ADJUST.saturation &&
+    params.tonemap === DEFAULT_ADJUST.tonemap;
 
   const resetAll = useCallback(() => onChange({ ...DEFAULT_ADJUST }), [onChange]);
 
   const resetOne = useCallback(
-    (key: keyof AdjustParams) => {
+    (key: NumericAdjustKey) => {
       onChange({ ...params, [key]: DEFAULT_ADJUST[key] });
     },
     [params, onChange]
   );
 
   const handleChange = useCallback(
-    (key: keyof AdjustParams, value: number) => {
+    (key: NumericAdjustKey, value: number) => {
       onChange({ ...params, [key]: value });
     },
     [params, onChange]
   );
+
+  const toggleTonemap = useCallback(() => {
+    onChange({ ...params, tonemap: !params.tonemap });
+  }, [params, onChange]);
 
   return (
     <div className="space-y-3">
@@ -157,6 +165,30 @@ export default function AdjustPanel({ params, onChange }: AdjustPanelProps) {
             </div>
           );
         })}
+      </div>
+
+      {/* ACES tone mapping toggle */}
+      <div className="pt-1 border-t border-zinc-800">
+        <label className="flex items-center justify-between cursor-pointer group">
+          <div className="flex items-center gap-1.5 text-xs text-zinc-500 group-hover:text-zinc-300 transition-colors">
+            <Sparkles className="w-3.5 h-3.5" />
+            ACES Tone Map
+          </div>
+          <button
+            role="switch"
+            aria-checked={params.tonemap}
+            onClick={toggleTonemap}
+            className={`relative w-8 h-4 rounded-full transition-colors ${
+              params.tonemap ? "bg-blue-500" : "bg-zinc-700"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${
+                params.tonemap ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </label>
       </div>
     </div>
   );

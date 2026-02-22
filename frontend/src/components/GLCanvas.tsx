@@ -9,8 +9,10 @@ interface GLCanvasProps {
   proxyUrl: string;
   /** Fully decoded RAW frame, replaces proxy texture when available */
   rawFrame?: RawFrame | null;
-  /** Adjustment parameters (exposure, brightness, contrast, saturation) */
+  /** Adjustment parameters (exposure, brightness, contrast, saturation, tonemap) */
   params?: AdjustParams;
+  /** Canvas colour space: 'srgb' (default) or 'display-p3' for wide-gamut displays */
+  colorSpace?: "srgb" | "display-p3";
   alt?: string;
   className?: string;
   /** Called when the proxy image texture is ready */
@@ -28,6 +30,7 @@ export default function GLCanvas({
   proxyUrl,
   rawFrame,
   params = DEFAULT_ADJUST,
+  colorSpace = "srgb",
   alt,
   className,
   onReady,
@@ -50,13 +53,20 @@ export default function GLCanvas({
     });
   }, []);
 
-  // --- Initialise WebGL once on mount ---
+  // --- Initialise WebGL; re-init when colorSpace prop changes (context must be recreated) ---
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // Destroy any existing renderer before creating a new context
+    if (rendererRef.current) {
+      rendererRef.current.destroy();
+      rendererRef.current = null;
+      setTextureLoaded(false);
+    }
+
     const renderer = new GLRenderer();
-    const ok = renderer.init(canvas);
+    const ok = renderer.init(canvas, colorSpace);
     if (!ok) {
       setGlSupported(false);
       return;
@@ -68,7 +78,8 @@ export default function GLCanvas({
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorSpace]);
 
   // --- Upload proxy WebP image when proxyUrl changes ---
   useEffect(() => {

@@ -6,8 +6,10 @@ import { motion } from "framer-motion";
 import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
+import { useDisplayDetect } from "../lib/display-detect";
 import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
+import ColorSpaceIndicator from "./ColorSpaceIndicator";
 
 interface ExifData {
   CameraModel: string;
@@ -51,6 +53,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
+  const display = useDisplayDetect();
 
   const handleClose = () => {
     // router.back() closes the intercepting modal and returns to gallery;
@@ -173,8 +176,13 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                 proxyUrl={imageUrl}
                 rawFrame={rawFrame}
                 params={adjustParams}
+                colorSpace={display.targetColorSpace}
                 alt={photo.OriginalFilename}
               />
+              {/* Color space indicator badge */}
+              <div className="absolute bottom-3 right-3 z-10">
+                <ColorSpaceIndicator caps={display} />
+              </div>
             </motion.div>
           </motion.div>
         </div>

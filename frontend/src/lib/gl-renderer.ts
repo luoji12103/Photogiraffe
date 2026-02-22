@@ -19,6 +19,8 @@ export interface AdjustParams {
   contrast: number;
   /** Saturation multiplier: 0.0 ~ 2.0, default 1 */
   saturation: number;
+  /** ACES filmic tone mapping (default false) */
+  tonemap: boolean;
 }
 
 export const DEFAULT_ADJUST: AdjustParams = {
@@ -26,6 +28,7 @@ export const DEFAULT_ADJUST: AdjustParams = {
   brightness: 0,
   contrast: 0,
   saturation: 1,
+  tonemap: false,
 };
 
 // ---------- GLSL source ----------
@@ -46,10 +49,21 @@ uniform float u_exposure;
 uniform float u_brightness;
 uniform float u_contrast;
 uniform float u_saturation;
+uniform float u_tonemap;
 varying vec2 v_texCoord;
 
 vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.001)), vec3(2.2)); }
 vec3 linearToSrgb(vec3 c) { return pow(max(c, vec3(0.001)), vec3(1.0 / 2.2)); }
+
+// ACES filmic tone map (approximate)
+vec3 acesFilmic(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c2 = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c2 * x + d) + e), 0.0, 1.0);
+}
 
 void main() {
   vec4 sample = texture2D(u_image, v_texCoord);
@@ -67,6 +81,9 @@ void main() {
   // 4. Saturation (rec.709 luma weights, luma-preserving)
   float luma = dot(linear, vec3(0.2126, 0.7152, 0.0722));
   linear = mix(vec3(luma), linear, u_saturation);
+
+  // 5. Optional ACES filmic tone mapping (mix avoids shader divergence)
+  linear = mix(linear, acesFilmic(linear), u_tonemap);
 
   gl_FragColor = vec4(linearToSrgb(clamp(linear, 0.0, 1.0)), sample.a);
 }
@@ -112,12 +129,15 @@ export class GLRenderer {
   private _ready = false;
   private _hasTexture = false;
 
-  /** Initialise WebGL on the given canvas. Returns false on failure. */
-  init(canvas: HTMLCanvasElement): boolean {
+  /** Initialise WebGL on the given canvas. Returns false on failure.
+   * @param colorSpace  "srgb" (default) or "display-p3" for wide-gamut canvas
+   */
+  init(canvas: HTMLCanvasElement, colorSpace: "srgb" | "display-p3" = "srgb"): boolean {
+    const ctxOpts = { colorSpace };
     const gl =
-      (canvas.getContext("webgl2") as WebGLRenderingContext | null) ??
-      (canvas.getContext("webgl") as WebGLRenderingContext | null) ??
-      (canvas.getContext("experimental-webgl") as WebGLRenderingContext | null);
+      (canvas.getContext("webgl2", ctxOpts) as WebGLRenderingContext | null) ??
+      (canvas.getContext("webgl", ctxOpts) as WebGLRenderingContext | null) ??
+      (canvas.getContext("experimental-webgl", ctxOpts) as WebGLRenderingContext | null);
 
     if (!gl) {
       console.warn("GLRenderer: WebGL not supported");
@@ -221,6 +241,7 @@ export class GLRenderer {
     set1("u_brightness", params.brightness);
     set1("u_contrast", params.contrast);
     set1("u_saturation", params.saturation);
+    set1("u_tonemap", params.tonemap ? 1.0 : 0.0);
 
     gl.uniform1i(gl.getUniformLocation(this.prog!, "u_image"), 0);
     gl.activeTexture(gl.TEXTURE0);
