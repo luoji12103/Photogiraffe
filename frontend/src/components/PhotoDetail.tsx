@@ -1,12 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
-import RawCanvas from "./RawCanvas";
+import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
+import GLCanvas from "./GLCanvas";
+import AdjustPanel from "./AdjustPanel";
 
 interface ExifData {
   CameraModel: string;
@@ -49,6 +50,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [photo, setPhoto] = useState<Photo>(initialPhoto);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
 
   const handleClose = () => {
     // router.back() closes the intercepting modal and returns to gallery;
@@ -144,7 +146,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       <div className="w-full h-full flex flex-col md:flex-row">
         {/* Image Section */}
         <div className="flex-1 relative flex items-center justify-center p-4 md:p-8">
-          {/* RAW quality badge */}
+          {/* Quality badge — only for RAW files */}
           {isRaw && (
             <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-sm border border-zinc-700">
               <Cpu className="w-3.5 h-3.5 text-emerald-400" />
@@ -166,46 +168,13 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
             className="relative w-full h-full max-w-5xl max-h-[80vh] flex items-center justify-center"
           >
             <motion.div layoutId={`photo-image-${photo.ID}`} className="relative w-full h-full">
-              {/* WebP proxy: always rendered; hidden once RAW frame is ready */}
-              <AnimatePresence>
-                {!rawFrame && (
-                  <motion.div
-                    key="proxy"
-                    className="absolute inset-0"
-                    initial={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.5 }}
-                  >
-                    <Image
-                      src={imageUrl}
-                      alt={photo.OriginalFilename}
-                      fill
-                      className="object-contain"
-                      sizes="100vw"
-                      priority
-                      unoptimized
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* RAW canvas: rendered when native decode completes */}
-              <AnimatePresence>
-                {rawFrame && (
-                  <motion.div
-                    key="raw"
-                    className="absolute inset-0"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.6 }}
-                  >
-                    <RawCanvas
-                      frame={rawFrame}
-                      alt={photo.OriginalFilename}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/* Unified WebGL renderer: starts with WebP proxy, upgrades to RAW when available */}
+              <GLCanvas
+                proxyUrl={imageUrl}
+                rawFrame={rawFrame}
+                params={adjustParams}
+                alt={photo.OriginalFilename}
+              />
             </motion.div>
           </motion.div>
         </div>
@@ -332,6 +301,11 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
               No EXIF data available for this photo.
             </div>
           )}
+
+          <div className="h-px bg-zinc-800 my-6" />
+
+          {/* Adjustment Sliders */}
+          <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
 
           <div className="h-px bg-zinc-800 my-6" />
 
