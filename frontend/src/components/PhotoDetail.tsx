@@ -3,8 +3,10 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { X, Camera, Aperture, Clock, Zap, MapPin, Calendar, Sparkles, Loader2, Palette } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu } from "lucide-react";
+import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
+import RawCanvas from "./RawCanvas";
 
 interface ExifData {
   CameraModel: string;
@@ -61,6 +63,16 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   // Use the proxy image for the detail view (route through Next.js API to avoid CORS/port issues)
   const proxyPath = photo.MinioPath.replace("raw/", "proxy/").replace(/\.[^/.]+$/, ".webp");
   const imageUrl = `/api/image?path=${encodeURIComponent(proxyPath)}`;
+
+  // Progressive RAW loading: detect RAW files and decode natively in browser
+  const isRaw = isRawFile(photo.OriginalFilename);
+  const rawProxyUrl = isRaw
+    ? `/api/image?path=${encodeURIComponent(photo.MinioPath)}`
+    : null;
+  const { frame: rawFrame, loading: rawLoading, error: rawError } = useRawDecoder(
+    photo.ID,
+    rawProxyUrl
+  );
 
   const exif = photo.ExifData;
   
@@ -132,20 +144,68 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       <div className="w-full h-full flex flex-col md:flex-row">
         {/* Image Section */}
         <div className="flex-1 relative flex items-center justify-center p-4 md:p-8">
+          {/* RAW quality badge */}
+          {isRaw && (
+            <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-sm border border-zinc-700">
+              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+              {rawLoading ? (
+                <>
+                  <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
+                  <span className="text-xs text-emerald-400">Decoding RAW…</span>
+                </>
+              ) : rawFrame ? (
+                <span className="text-xs text-emerald-400 font-medium">RAW Native</span>
+              ) : rawError ? (
+                <span className="text-xs text-amber-400">WebP Proxy</span>
+              ) : null}
+            </div>
+          )}
+
           <motion.div
             layoutId={`photo-container-${photo.ID}`}
             className="relative w-full h-full max-w-5xl max-h-[80vh] flex items-center justify-center"
           >
             <motion.div layoutId={`photo-image-${photo.ID}`} className="relative w-full h-full">
-              <Image
-                src={imageUrl}
-                alt={photo.OriginalFilename}
-                fill
-                className="object-contain"
-                sizes="100vw"
-                priority
-                unoptimized
-              />
+              {/* WebP proxy: always rendered; hidden once RAW frame is ready */}
+              <AnimatePresence>
+                {!rawFrame && (
+                  <motion.div
+                    key="proxy"
+                    className="absolute inset-0"
+                    initial={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.5 }}
+                  >
+                    <Image
+                      src={imageUrl}
+                      alt={photo.OriginalFilename}
+                      fill
+                      className="object-contain"
+                      sizes="100vw"
+                      priority
+                      unoptimized
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* RAW canvas: rendered when native decode completes */}
+              <AnimatePresence>
+                {rawFrame && (
+                  <motion.div
+                    key="raw"
+                    className="absolute inset-0"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.6 }}
+                  >
+                    <RawCanvas
+                      frame={rawFrame}
+                      alt={photo.OriginalFilename}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           </motion.div>
         </div>

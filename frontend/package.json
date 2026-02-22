@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "framer-motion": "^12.34.3",
+    "libraw-wasm": "^1.1.2",
     "lucide-react": "^0.575.0",
     "minio": "^8.0.6",
     "next": "16.1.6",
