@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
-import { Aperture, LogOut, Settings } from "lucide-react";
+import { Aperture, LogOut, Settings, Shield } from "lucide-react";
 
 const PUBLIC_PATHS = ["/login", "/register"];
 
@@ -20,9 +20,14 @@ function AppHeader() {
       </Link>
       <div className="flex items-center gap-3">
         {user.role === "SuperAdmin" && (
-          <Link href="/settings" className="text-zinc-500 hover:text-zinc-300 transition-colors" title="Settings">
-            <Settings className="w-4 h-4" />
-          </Link>
+          <>
+            <Link href="/admin" className="text-zinc-500 hover:text-zinc-300 transition-colors" title="Admin Panel">
+              <Shield className="w-4 h-4" />
+            </Link>
+            <Link href="/settings" className="text-zinc-500 hover:text-zinc-300 transition-colors" title="Settings">
+              <Settings className="w-4 h-4" />
+            </Link>
+          </>
         )}
         <span className="text-xs text-zinc-500">{user.username}</span>
         <button

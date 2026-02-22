@@ -881,6 +881,61 @@ func main() {
 		return c.JSON(fiber.Map{"message": "Export job status updated"})
 	})
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 5 — Feature Flags & Admin
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/admin/flags — list all feature flags (SuperAdmin)
+	app.Get("/api/admin/flags", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var flags []models.FeatureFlag
+		database.DB.Order("feature_name asc").Find(&flags)
+		return c.JSON(flags)
+	})
+
+	// PUT /api/admin/flags/:name — toggle a feature flag (SuperAdmin)
+	app.Put("/api/admin/flags/:name", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		name := c.Params("name")
+		var input struct {
+			IsEnabled bool `json:"is_enabled"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		var flag models.FeatureFlag
+		if result := database.DB.Where("feature_name = ?", name).First(&flag); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Feature flag not found"})
+		}
+		flag.IsEnabled = input.IsEnabled
+		database.DB.Save(&flag)
+		return c.JSON(flag)
+	})
+
+	// GET /api/feature/:name — query a single feature flag (any authenticated user)
+	app.Get("/api/feature/:name", requireJWT(), func(c *fiber.Ctx) error {
+		name := c.Params("name")
+		var flag models.FeatureFlag
+		if result := database.DB.Where("feature_name = ?", name).First(&flag); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Feature flag not found"})
+		}
+		return c.JSON(fiber.Map{"feature_name": flag.FeatureName, "is_enabled": flag.IsEnabled})
+	})
+
+	// GET /api/admin/users — list all users (SuperAdmin)
+	app.Get("/api/admin/users", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var users []struct {
+			ID        uint   `json:"id"`
+			Username  string `json:"username"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			CreatedAt string `json:"created_at"`
+		}
+		database.DB.Model(&models.User{}).
+			Select("id, username, email, role, created_at").
+			Order("id asc").
+			Scan(&users)
+		return c.JSON(users)
+	})
+
 	fmt.Println("Starting Go Core API on :8080...")
 	if err := app.Listen(":8080"); err != nil {
 		log.Fatal(err)
