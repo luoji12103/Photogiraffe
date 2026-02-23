@@ -90,18 +90,19 @@ export default function AdminPage() {
 
   return (
     <AuthGuard adminOnly>
-      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans p-8">
-        <div className="max-w-4xl mx-auto">
-          <header className="mb-10 flex items-center gap-4">
+      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <header className="mb-8 flex items-center gap-4">
             <Link
               href="/"
-              className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
+              className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors shrink-0"
             >
               <ArrowLeft size={20} />
             </Link>
             <div>
-              <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <Shield size={28} className="text-zinc-400" />
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
+                <Shield size={24} className="text-zinc-400 sm:hidden" />
+                <Shield size={28} className="text-zinc-400 hidden sm:block" />
                 Admin Panel
               </h1>
               <p className="text-zinc-500 dark:text-zinc-400 mt-1 text-sm">功能开关与用户管理</p>
@@ -109,12 +110,12 @@ export default function AdminPage() {
           </header>
 
           {/* Tabs */}
-          <div className="flex gap-1 mb-8 bg-zinc-900 rounded-xl p-1 w-fit">
+          <div className="flex gap-1 mb-6 sm:mb-8 bg-zinc-900 rounded-xl p-1 w-fit">
             {(["flags", "users"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-4 sm:px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
                   tab === t
                     ? "bg-zinc-700 text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -143,7 +144,7 @@ export default function AdminPage() {
                   {flags.map((flag) => (
                     <div
                       key={flag.FeatureName}
-                      className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 flex items-start justify-between gap-4"
+                      className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 sm:p-5 flex items-start justify-between gap-4"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -156,7 +157,7 @@ export default function AdminPage() {
                             {FLAG_LABELS[flag.FeatureName] ?? flag.FeatureName}
                           </span>
                         </div>
-                        <p className="text-xs text-zinc-500 truncate">{flag.Description}</p>
+                        <p className="text-xs text-zinc-500 line-clamp-2">{flag.Description}</p>
                         <code className="text-xs text-zinc-600 mt-1 block">{flag.FeatureName}</code>
                       </div>
                       <button
@@ -190,15 +191,15 @@ export default function AdminPage() {
                   <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
                 </div>
               ) : (
-                <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                  <table className="w-full text-sm">
+                <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
+                  <table className="w-full text-sm min-w-[500px]">
                     <thead>
                       <tr className="border-b border-zinc-800 bg-zinc-950/50">
-                        <th className="text-left px-5 py-3 text-zinc-500 font-medium w-12">ID</th>
-                        <th className="text-left px-5 py-3 text-zinc-500 font-medium">用户名</th>
-                        <th className="text-left px-5 py-3 text-zinc-500 font-medium">邮箱</th>
-                        <th className="text-left px-5 py-3 text-zinc-500 font-medium">角色</th>
-                        <th className="text-left px-5 py-3 text-zinc-500 font-medium">注册时间</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium w-12">ID</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium">用户名</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium hidden sm:table-cell">邮箱</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium">角色</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium hidden md:table-cell">注册时间</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -207,10 +208,10 @@ export default function AdminPage() {
                           key={u.id}
                           className={`border-b border-zinc-800/50 ${idx % 2 === 0 ? "" : "bg-zinc-950/30"}`}
                         >
-                          <td className="px-5 py-3 text-zinc-500">{u.id}</td>
-                          <td className="px-5 py-3 font-medium">{u.username}</td>
-                          <td className="px-5 py-3 text-zinc-400">{u.email}</td>
-                          <td className="px-5 py-3">
+                          <td className="px-4 sm:px-5 py-3 text-zinc-500">{u.id}</td>
+                          <td className="px-4 sm:px-5 py-3 font-medium">{u.username}</td>
+                          <td className="px-4 sm:px-5 py-3 text-zinc-400 hidden sm:table-cell">{u.email}</td>
+                          <td className="px-4 sm:px-5 py-3">
                             <span
                               className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                                 u.role === "SuperAdmin"
@@ -221,7 +222,7 @@ export default function AdminPage() {
                               {u.role}
                             </span>
                           </td>
-                          <td className="px-5 py-3 text-zinc-500 text-xs" suppressHydrationWarning>
+                          <td className="px-4 sm:px-5 py-3 text-zinc-500 text-xs hidden md:table-cell" suppressHydrationWarning>
                             {u.created_at ? new Date(u.created_at).toLocaleDateString("zh-CN") : "—"}
                           </td>
                         </tr>

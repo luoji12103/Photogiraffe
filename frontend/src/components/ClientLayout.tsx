@@ -13,26 +13,26 @@ function AppHeader() {
   const { user, logout } = useAuth();
   if (!user) return null;
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 h-12 flex items-center justify-between px-4 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50">
+    <header className="fixed top-0 left-0 right-0 z-40 h-12 flex items-center justify-between px-3 sm:px-4 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50">
       <Link href="/" className="flex items-center gap-2 text-zinc-300 hover:text-zinc-100 transition-colors">
-        <Aperture className="w-5 h-5" />
-        <span className="text-sm font-medium tracking-tight">Photogiraffe</span>
+        <Aperture className="w-5 h-5 flex-shrink-0" />
+        <span className="text-sm font-medium tracking-tight hidden xs:inline sm:inline">Photogiraffe</span>
       </Link>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         {user.role === "SuperAdmin" && (
           <>
-            <Link href="/admin" className="text-zinc-500 hover:text-zinc-300 transition-colors" title="Admin Panel">
+            <Link href="/admin" className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Admin Panel">
               <Shield className="w-4 h-4" />
             </Link>
-            <Link href="/settings" className="text-zinc-500 hover:text-zinc-300 transition-colors" title="Settings">
+            <Link href="/settings" className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Settings">
               <Settings className="w-4 h-4" />
             </Link>
           </>
         )}
-        <span className="text-xs text-zinc-500">{user.username}</span>
+        <span className="text-xs text-zinc-500 hidden sm:block max-w-[120px] truncate">{user.username}</span>
         <button
           onClick={logout}
-          className="text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-zinc-500 hover:text-zinc-300 transition-colors p-1"
           title="Sign out"
         >
           <LogOut className="w-4 h-4" />
