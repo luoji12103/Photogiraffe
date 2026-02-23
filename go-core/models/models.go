@@ -88,3 +88,13 @@ type RefreshToken struct {
 	ExpiresAt time.Time `gorm:"not null"`
 	Revoked   bool      `gorm:"default:false"`
 }
+
+// ShareLink enables unauthenticated public access to a single photo.
+type ShareLink struct {
+	gorm.Model
+	PhotoID   uint       `gorm:"not null;index"`
+	UserID    uint       `gorm:"not null;index"` // creator
+	Token     string     `gorm:"not null;uniqueIndex"` // 32-byte hex random token
+	ExpiresAt *time.Time // nil = never expires
+	IsRevoked bool       `gorm:"default:false"`
+}

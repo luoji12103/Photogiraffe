@@ -7,7 +7,7 @@ import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
 import { Aperture, LogOut, Settings, Shield } from "lucide-react";
 
-const PUBLIC_PATHS = ["/login", "/register"];
+const PUBLIC_PATHS = ["/login", "/register", "/share/"];
 
 function AppHeader() {
   const { user, logout } = useAuth();

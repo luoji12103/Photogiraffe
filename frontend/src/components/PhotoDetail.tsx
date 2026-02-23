@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Share2, Link, Copy, Check } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -60,6 +60,10 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [inferError, setInferError] = useState("");
   const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareError, setShareError] = useState("");
   const display = useDisplayDetect();
   const { authFetch } = useAuth();
 
@@ -144,6 +148,29 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       setInferError(error.message);
       setIsInferring(false);
     }
+  };
+
+  const handleShare = async () => {
+    setShareLoading(true);
+    setShareError("");
+    try {
+      const res = await authFetch(`/api/photos/${photo.ID}/share`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create share link");
+      setShareToken(data.token);
+    } catch (err: any) {
+      setShareError(err.message);
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareToken) return;
+    const url = `${window.location.origin}/share/${shareToken}`;
+    await navigator.clipboard.writeText(url);
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2000);
   };
 
   const handleAnalyze = async () => {
@@ -376,6 +403,57 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
           {/* Export Engine */}
           <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
+
+          <div className="h-px bg-zinc-800 my-6" />
+
+          {/* Share Link */}
+          <div className="space-y-3 mb-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-sky-400" />
+                Share
+              </h3>
+              {!shareToken && (
+                <button
+                  onClick={handleShare}
+                  disabled={shareLoading}
+                  className="text-xs bg-sky-900/60 hover:bg-sky-800/80 text-sky-200 px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
+                >
+                  {shareLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    "Create Link"
+                  )}
+                </button>
+              )}
+            </div>
+            {shareError && (
+              <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{shareError}</div>
+            )}
+            {shareToken && (
+              <div className="bg-sky-900/20 border border-sky-700/30 rounded-md p-3 space-y-2">
+                <div className="flex items-center gap-2 text-xs text-zinc-400">
+                  <Link className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{typeof window !== 'undefined' ? `${window.location.origin}/share/${shareToken}` : `/share/${shareToken}`}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCopyShareLink}
+                    className="flex items-center gap-1.5 text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded transition-colors flex-1 justify-center"
+                  >
+                    {shareCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {shareCopied ? "Copied!" : "Copy Link"}
+                  </button>
+                  <button
+                    onClick={() => setShareToken(null)}
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-1.5 rounded transition-colors"
+                  >
+                    Revoke
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="h-px bg-zinc-800 my-6" />
 

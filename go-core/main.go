@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -75,6 +77,15 @@ func requireInternalSecret(secret string) fiber.Handler {
 		}
 		return c.Next()
 	}
+}
+
+// generateShareToken generates a cryptographically secure 32-byte hex token.
+func generateShareToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func main() {
@@ -974,6 +985,175 @@ func main() {
 			Order("id asc").
 			Scan(&users)
 		return c.JSON(users)
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 6 — Share Links (public, unauthenticated access)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/photos/:id/share — create or return existing share link
+	app.Post("/api/photos/:id/share", requireJWT(), func(c *fiber.Ctx) error {
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+
+		// Parse optional expiry_hours from body
+		var input struct {
+			ExpiryHours *int `json:"expiry_hours"` // nil = never expires
+		}
+		c.BodyParser(&input) // non-fatal if empty body
+
+		// Check if an active share link already exists
+		var existing models.ShareLink
+		q := database.DB.Where("photo_id = ? AND is_revoked = false", photoID)
+		if input.ExpiryHours == nil {
+			q = q.Where("expires_at IS NULL")
+		}
+		if result := q.First(&existing); result.Error == nil {
+			return c.JSON(fiber.Map{
+				"token":      existing.Token,
+				"share_url":  fmt.Sprintf("/share/%s", existing.Token),
+				"expires_at": existing.ExpiresAt,
+				"created_at": existing.CreatedAt,
+			})
+		}
+
+		token, err := generateShareToken()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
+		}
+
+		sl := models.ShareLink{
+			PhotoID:   uint(photoID),
+			UserID:    uid,
+			Token:     token,
+			IsRevoked: false,
+		}
+		if input.ExpiryHours != nil {
+			exp := time.Now().Add(time.Duration(*input.ExpiryHours) * time.Hour)
+			sl.ExpiresAt = &exp
+		}
+		if result := database.DB.Create(&sl); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create share link"})
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"token":      sl.Token,
+			"share_url":  fmt.Sprintf("/share/%s", sl.Token),
+			"expires_at": sl.ExpiresAt,
+			"created_at": sl.CreatedAt,
+		})
+	})
+
+	// GET /api/photos/:id/share — list active share links for this photo
+	app.Get("/api/photos/:id/share", requireJWT(), func(c *fiber.Ctx) error {
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+
+		var links []models.ShareLink
+		database.DB.Where("photo_id = ? AND is_revoked = false", photoID).Find(&links)
+		return c.JSON(links)
+	})
+
+	// DELETE /api/photos/:id/share/:token — revoke a specific share link
+	app.Delete("/api/photos/:id/share/:token", requireJWT(), func(c *fiber.Ctx) error {
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+		token := c.Params("token")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+
+		result := database.DB.Model(&models.ShareLink{}).
+			Where("token = ? AND photo_id = ?", token, photoID).
+			Update("is_revoked", true)
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Share link not found"})
+		}
+		return c.JSON(fiber.Map{"message": "Share link revoked"})
+	})
+
+	// GET /share/:token — public endpoint, no JWT required
+	// Returns photo metadata + proxy image URL for public viewing
+	app.Get("/share/:token", func(c *fiber.Ctx) error {
+		token := c.Params("token")
+		var sl models.ShareLink
+		if result := database.DB.Where("token = ? AND is_revoked = false", token).First(&sl); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Share link not found or expired"})
+		}
+		// Check expiry
+		if sl.ExpiresAt != nil && time.Now().After(*sl.ExpiresAt) {
+			return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Share link has expired"})
+		}
+
+		var photo models.Photo
+		if result := database.DB.Preload("ExifData").First(&photo, sl.PhotoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if photo.Status != "completed" {
+			return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"error": "Photo is still processing"})
+		}
+
+		// Build proxy path for presigned URL
+		proxyPath := strings.Replace(photo.MinioPath, "raw/", "proxy/", 1)
+		lastDot := strings.LastIndex(proxyPath, ".")
+		if lastDot > -1 {
+			proxyPath = proxyPath[:lastDot] + ".webp"
+		}
+		thumbPath := strings.Replace(photo.MinioPath, "raw/", "thumb/", 1)
+		thumbPath = thumbPath[:strings.LastIndex(thumbPath, ".")] + ".webp"
+
+		presignExpiry := 1 * time.Hour
+		proxyURL, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", proxyPath, presignExpiry, nil)
+		thumbURL, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", thumbPath, presignExpiry, nil)
+
+		return c.JSON(fiber.Map{
+			"photo": fiber.Map{
+				"id":                photo.ID,
+				"original_filename": photo.OriginalFilename,
+				"uploaded_at":       photo.UploadedAt,
+				"exif":              photo.ExifData,
+			},
+			"proxy_url": proxyURL.String(),
+			"thumb_url": thumbURL.String(),
+			"share": fiber.Map{
+				"token":      sl.Token,
+				"expires_at": sl.ExpiresAt,
+				"created_at": sl.CreatedAt,
+			},
+		})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")
