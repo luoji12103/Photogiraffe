@@ -24,7 +24,7 @@ interface AuthState {
 
 interface AuthContextValue extends AuthState {
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string, inviteCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Fetch wrapper that automatically injects the Bearer token and
    *  retries once after a transparent token refresh on 401. */
@@ -123,11 +123,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── register ───────────────────────────────────────────────────────────────
   const register = useCallback(
-    async (username: string, email: string, password: string) => {
+    async (username: string, email: string, password: string, inviteCode?: string) => {
+      const body: Record<string, string> = { username, email, password };
+      if (inviteCode) body.invite_code = inviteCode;
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Registration failed");

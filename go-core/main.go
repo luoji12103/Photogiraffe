@@ -19,6 +19,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"golang.org/x/crypto/bcrypt"
@@ -117,6 +118,7 @@ func main() {
 		{"preset_management", true, "Colour preset management"},
 		{"raw_decode", true, "Browser-side RAW file decoding (libraw-wasm)"},
 		{"hdr_display", true, "Wide-gamut / HDR rendering (WebGL + ACES)"},
+		{"require_invite", false, "Require invite code for new user registration"},
 	}
 	for _, f := range defaultFlags {
 		var ff models.FeatureFlag
@@ -162,23 +164,61 @@ func main() {
 	// Phase 5 — JWT Authentication
 	// ─────────────────────────────────────────────────────────────────────────
 
+	// Rate-limit auth endpoints: 10 req/min per IP
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many requests. Please wait before trying again."})
+		},
+	})
+
 	// POST /api/auth/register — create a new user account
-	app.Post("/api/auth/register", func(c *fiber.Ctx) error {
+	app.Post("/api/auth/register", authLimiter, func(c *fiber.Ctx) error {
 		var input struct {
-			Username string `json:"username"`
-			Email    string `json:"email"`
-			Password string `json:"password"`
+			Username   string `json:"username"`
+			Email      string `json:"email"`
+			Password   string `json:"password"`
+			InviteCode string `json:"invite_code"`
 		}
 		if err := c.BodyParser(&input); err != nil || input.Username == "" || input.Password == "" || input.Email == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "username, email and password are required"})
 		}
 
-		// First registered user becomes SuperAdmin
+		// First registered user becomes SuperAdmin (always exempt from invite check)
 		var count int64
 		database.DB.Model(&models.User{}).Count(&count)
 		role := "StandardUser"
 		if count == 0 {
 			role = "SuperAdmin"
+		}
+
+		// Check invite code requirement (skip for first user)
+		if count > 0 {
+			var inviteFlag models.FeatureFlag
+			if err := database.DB.Where("feature_name = ?", "require_invite").First(&inviteFlag).Error; err == nil && inviteFlag.IsEnabled {
+				if input.InviteCode == "" {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "An invite code is required to register"})
+				}
+				var ic models.InviteCode
+				if err := database.DB.Where("code = ? AND used_by IS NULL", input.InviteCode).First(&ic).Error; err != nil {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid or already-used invite code"})
+				}
+				// Check expiry
+				if ic.ExpiresAt != nil && time.Now().After(*ic.ExpiresAt) {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invite code has expired"})
+				}
+				// Mark as used after successful registration — store pointer for later update
+				defer func(inviteID uint) {
+					now := time.Now()
+					database.DB.Model(&models.InviteCode{}).Where("id = ?", inviteID).Updates(map[string]interface{}{
+						"used_at": now,
+					})
+				}(ic.ID)
+			}
 		}
 
 		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -233,7 +273,7 @@ func main() {
 	})
 
 	// POST /api/auth/login — authenticate and issue tokens
-	app.Post("/api/auth/login", func(c *fiber.Ctx) error {
+	app.Post("/api/auth/login", authLimiter, func(c *fiber.Ctx) error {
 		var input struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -962,13 +1002,14 @@ func main() {
 	})
 
 	// GET /api/feature/:name — query a single feature flag (any authenticated user)
-	app.Get("/api/feature/:name", requireJWT(), func(c *fiber.Ctx) error {
+	// GET /api/feature/:name — public endpoint for checking feature flag state
+	app.Get("/api/feature/:name", func(c *fiber.Ctx) error {
 		name := c.Params("name")
 		var flag models.FeatureFlag
 		if result := database.DB.Where("feature_name = ?", name).First(&flag); result.Error != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Feature flag not found"})
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Feature flag not found", "enabled": false})
 		}
-		return c.JSON(fiber.Map{"feature_name": flag.FeatureName, "is_enabled": flag.IsEnabled})
+		return c.JSON(fiber.Map{"feature_name": flag.FeatureName, "enabled": flag.IsEnabled, "is_enabled": flag.IsEnabled})
 	})
 
 	// GET /api/admin/users — list all users (SuperAdmin)
@@ -1154,6 +1195,55 @@ func main() {
 				"created_at": sl.CreatedAt,
 			},
 		})
+	})
+
+	// POST /api/admin/invite-codes — create a new invite code (SuperAdmin only)
+	app.Post("/api/admin/invite-codes", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+
+		var body struct {
+			ExpiresInDays *int `json:"expires_in_days"` // nil = never expires
+		}
+		_ = c.BodyParser(&body) // optional body
+
+		// Generate random 16-char invite code
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate invite code"})
+		}
+		code := strings.ToUpper(hex.EncodeToString(b))
+
+		ic := models.InviteCode{
+			Code:      code,
+			CreatedBy: uid,
+		}
+		if body.ExpiresInDays != nil {
+			t := time.Now().Add(time.Duration(*body.ExpiresInDays) * 24 * time.Hour)
+			ic.ExpiresAt = &t
+		}
+		if err := database.DB.Create(&ic).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create invite code"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(ic)
+	})
+
+	// GET /api/admin/invite-codes — list all invite codes (SuperAdmin only)
+	app.Get("/api/admin/invite-codes", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var codes []models.InviteCode
+		if err := database.DB.Order("created_at desc").Find(&codes).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch invite codes"})
+		}
+		return c.JSON(codes)
+	})
+
+	// DELETE /api/admin/invite-codes/:id — delete an invite code (SuperAdmin only)
+	app.Delete("/api/admin/invite-codes/:id", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		result := database.DB.Delete(&models.InviteCode{}, id)
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Invite code not found"})
+		}
+		return c.JSON(fiber.Map{"message": "Invite code deleted"})
 	})
 
 	// POST /api/photos/batch-delete — delete multiple photos by ID

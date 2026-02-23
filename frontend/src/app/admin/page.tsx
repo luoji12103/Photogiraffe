@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield, CircleCheck, CircleX } from "lucide-react";
+import { ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield, CircleCheck, CircleX, KeyRound, Plus, Copy, Check } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
 
@@ -21,7 +21,17 @@ interface User {
   created_at: string;
 }
 
-type Tab = "flags" | "users";
+type Tab = "flags" | "users" | "invites";
+
+interface InviteCode {
+  ID: number;
+  Code: string;
+  CreatedBy: number;
+  UsedBy: number | null;
+  UsedAt: string | null;
+  ExpiresAt: string | null;
+  CreatedAt: string;
+}
 
 const FLAG_LABELS: Record<string, string> = {
   ai_analysis: "AI 分析",
@@ -30,6 +40,7 @@ const FLAG_LABELS: Record<string, string> = {
   preset_management: "预设管理",
   raw_decode: "RAW 解码",
   hdr_display: "HDR 显示",
+  require_invite: "邀请码注册",
 };
 
 export default function AdminPage() {
@@ -45,6 +56,12 @@ export default function AdminPage() {
   // Users state
   const [users, setUsers] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
+
+  // Invite Codes state
+  const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
+  const [invitesLoading, setInvitesLoading] = useState(true);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const loadFlags = useCallback(() => {
     setFlagsLoading(true);
@@ -64,6 +81,31 @@ export default function AdminPage() {
 
   useEffect(() => { loadFlags(); }, [loadFlags]);
   useEffect(() => { if (tab === "users") loadUsers(); }, [tab, loadUsers]);
+  useEffect(() => { if (tab === "invites") loadInviteCodes(); }, [tab]); // eslint-disable-line
+
+  const loadInviteCodes = useCallback(() => {
+    setInvitesLoading(true);
+    authFetch("/api/admin/invite-codes")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setInviteCodes(Array.isArray(data) ? data : []))
+      .finally(() => setInvitesLoading(false));
+  }, [authFetch]);
+
+  const handleCreateInvite = async () => {
+    setCreatingInvite(true);
+    try {
+      const res = await authFetch("/api/admin/invite-codes", { method: "POST" });
+      if (res.ok) loadInviteCodes();
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
+  const handleCopyCode = async (code: string) => {
+    await navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
 
   const toggleFlag = async (flag: FeatureFlag) => {
     setToggling(flag.FeatureName);
@@ -111,7 +153,7 @@ export default function AdminPage() {
 
           {/* Tabs */}
           <div className="flex gap-1 mb-6 sm:mb-8 bg-zinc-900 rounded-xl p-1 w-fit">
-            {(["flags", "users"] as Tab[]).map((t) => (
+            {(["flags", "users", "invites"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -121,8 +163,8 @@ export default function AdminPage() {
                     : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
-                {t === "flags" ? <ToggleRight size={16} /> : <Users size={16} />}
-                {t === "flags" ? "功能开关" : "用户管理"}
+                {t === "flags" ? <ToggleRight size={16} /> : t === "users" ? <Users size={16} /> : <KeyRound size={16} />}
+                {t === "flags" ? "功能开关" : t === "users" ? "用户管理" : "邀请码"}
               </button>
             ))}
           </div>
@@ -236,6 +278,76 @@ export default function AdminPage() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Invite Codes Tab */}
+          {tab === "invites" && (
+            <div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <p className="text-sm text-zinc-500">
+                  单次使用邀请码，供新用户注册（需启用"require_invite"功能开关）
+                </p>
+                <button
+                  onClick={handleCreateInvite}
+                  disabled={creatingInvite}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 shrink-0"
+                >
+                  {creatingInvite ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  生成邀请码
+                </button>
+              </div>
+
+              {invitesLoading ? (
+                <div className="flex justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+                </div>
+              ) : inviteCodes.length === 0 ? (
+                <div className="text-center py-16 text-zinc-600">
+                  暂无邀请码，点击"生成邀请码"创建
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {inviteCodes.map((ic) => (
+                    <div
+                      key={ic.ID}
+                      className={`flex items-center justify-between px-4 py-3 rounded-xl border ${
+                        ic.UsedBy
+                          ? "bg-zinc-950/50 border-zinc-800 opacity-50"
+                          : "bg-zinc-900 border-zinc-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <KeyRound className="w-4 h-4 text-zinc-500 shrink-0" />
+                        <span className="font-mono text-sm tracking-widest text-zinc-200">{ic.Code}</span>
+                        {ic.UsedBy ? (
+                          <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">已使用</span>
+                        ) : (
+                          <span className="text-xs text-green-700 bg-green-900/20 px-2 py-0.5 rounded border border-green-800/30">未使用</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-600 hidden sm:block" suppressHydrationWarning>
+                          {new Date(ic.CreatedAt).toLocaleDateString("zh-CN")}
+                        </span>
+                        {!ic.UsedBy && (
+                          <button
+                            onClick={() => handleCopyCode(ic.Code)}
+                            className="p-1.5 text-zinc-500 hover:text-zinc-200 transition-colors"
+                            title="复制邀请码"
+                          >
+                            {copiedCode === ic.Code ? (
+                              <Check className="w-4 h-4 text-green-400" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

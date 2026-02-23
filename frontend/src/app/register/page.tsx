@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
-import { Aperture, Loader2 } from "lucide-react";
+import { Aperture, Loader2, KeyRound } from "lucide-react";
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -12,15 +12,27 @@ export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [requireInvite, setRequireInvite] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Check whether the server requires an invite code for registration
+  useEffect(() => {
+    fetch("/api/feature/require_invite")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.enabled) setRequireInvite(true);
+      })
+      .catch(() => {/* ignore — assume not required */});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      await register(username, email, password);
+      await register(username, email, password, requireInvite ? inviteCode : undefined);
       router.replace("/");
     } catch (err: any) {
       setError(err.message || "Registration failed");
@@ -77,6 +89,25 @@ export default function RegisterPage() {
             />
           </div>
 
+          {requireInvite && (
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1.5 flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5" />
+                Invite Code
+              </label>
+              <input
+                type="text"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                required
+                className="w-full bg-zinc-900 border border-amber-700/60 rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 transition-colors font-mono tracking-widest"
+                placeholder="XXXXXXXXXXXXXXXX"
+                maxLength={16}
+              />
+              <p className="text-xs text-zinc-600 mt-1">An invite code is required to create an account.</p>
+            </div>
+          )}
+
           {error && (
             <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-3">
               {error}
@@ -109,3 +140,4 @@ export default function RegisterPage() {
     </div>
   );
 }
+
