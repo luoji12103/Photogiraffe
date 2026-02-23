@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import PhotoGrid from "@/components/PhotoGrid";
 import UploadPanel from "@/components/UploadPanel";
+import BatchActionBar from "@/components/BatchActionBar";
 import { useAuth } from "@/context/AuthContext";
-import { Search, Filter, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Filter, ChevronLeft, ChevronRight, CheckSquare } from "lucide-react";
 
 interface Photo {
   ID: number;
@@ -42,6 +43,12 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [searchInput, setSearchInput] = useState("");
+
+  // Multi-select state
+  const [selectable, setSelectable] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchExporting, setBatchExporting] = useState(false);
 
   // Debounce search input
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,6 +100,64 @@ export default function Home() {
     fetchPhotos(1);
   };
 
+  const handleToggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectable(false);
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} photo(s)? This cannot be undone.`)) return;
+    setBatchDeleting(true);
+    try {
+      const res = await authFetch("/api/photos/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      // Refresh grid
+      handleClearSelection();
+      fetchPhotos(page);
+    } catch (err) {
+      console.error("Batch delete error:", err);
+      alert("Failed to delete photos. Please try again.");
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
+
+  const handleBatchExport = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchExporting(true);
+    try {
+      const res = await authFetch("/api/photos/batch-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selectedIds), format: "jpeg" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Export failed");
+      alert(`Queued ${data.queued} export job(s). Check the export panel on each photo for download links.`);
+      handleClearSelection();
+    } catch (err) {
+      console.error("Batch export error:", err);
+      alert("Failed to queue export jobs. Please try again.");
+    } finally {
+      setBatchExporting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -104,7 +169,21 @@ export default function Home() {
               {total > 0 ? `${total} photo${total !== 1 ? "s" : ""}` : "Your high-quality photo collection."}
             </p>
           </div>
-          <UploadPanel onUploadComplete={handleUploadComplete} />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { setSelectable((s) => !s); setSelectedIds(new Set()); }}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors
+                ${
+                  selectable
+                    ? "bg-sky-900/30 border-sky-600 text-sky-300"
+                    : "bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                }`}
+            >
+              <CheckSquare className="w-4 h-4" />
+              {selectable ? "Done" : "Select"}
+            </button>
+            <UploadPanel onUploadComplete={handleUploadComplete} />
+          </div>
         </header>
 
         {/* Search & Filter Bar */}
@@ -146,7 +225,13 @@ export default function Home() {
 
         {/* Grid */}
         <main>
-          <PhotoGrid photos={photos} loading={loading} />
+          <PhotoGrid
+            photos={photos}
+            loading={loading}
+            selectable={selectable}
+            selectedIds={selectedIds}
+            onToggle={handleToggleSelect}
+          />
         </main>
 
         {/* Empty state */}
@@ -212,6 +297,16 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Batch action floating bar */}
+      <BatchActionBar
+        selectedCount={selectedIds.size}
+        onClearSelection={handleClearSelection}
+        onBatchDelete={handleBatchDelete}
+        onBatchExport={handleBatchExport}
+        deleting={batchDeleting}
+        exporting={batchExporting}
+      />
     </div>
   );
 }

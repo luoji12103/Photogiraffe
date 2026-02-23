@@ -1156,6 +1156,105 @@ func main() {
 		})
 	})
 
+	// POST /api/photos/batch-delete — delete multiple photos by ID
+	app.Post("/api/photos/batch-delete", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var body struct {
+			IDs []uint `json:"ids"`
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids array required"})
+		}
+		if len(body.IDs) > 100 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "maximum 100 photos per batch"})
+		}
+
+		// Fetch only photos the caller owns (SuperAdmin can delete any)
+		var photos []models.Photo
+		q := database.DB.Where("id IN ?", body.IDs)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		if err := q.Find(&photos).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
+		}
+
+		ctx := c.Context()
+		deleted := 0
+		for _, photo := range photos {
+			// Remove all MinIO variants (raw / proxy / thumb)
+			rawPath := photo.MinioPath
+			ext := filepath.Ext(rawPath)
+			proxyPath := strings.TrimSuffix(strings.Replace(rawPath, "raw/", "proxy/", 1), ext) + ".webp"
+			thumbPath := strings.TrimSuffix(strings.Replace(rawPath, "raw/", "thumb/", 1), ext) + ".webp"
+			for _, obj := range []string{rawPath, proxyPath, thumbPath} {
+				_ = storage.MinioClient.RemoveObject(ctx, "photos", obj, minio.RemoveObjectOptions{})
+			}
+			database.DB.Delete(&photo)
+			deleted++
+		}
+
+		return c.JSON(fiber.Map{"deleted": deleted, "requested": len(body.IDs)})
+	})
+
+	// POST /api/photos/batch-export — queue export jobs for multiple photos
+	app.Post("/api/photos/batch-export", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var body struct {
+			IDs    []uint `json:"ids"`
+			Format string `json:"format"`
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids array required"})
+		}
+		if len(body.IDs) > 50 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "maximum 50 photos per batch export"})
+		}
+		format := body.Format
+		if format == "" {
+			format = "jpeg"
+		}
+		optsJSON := fmt.Sprintf(`{"format":"%s"}`, format)
+
+		// Fetch completed photos owned by the caller
+		var photos []models.Photo
+		q := database.DB.Where("id IN ? AND status = 'completed'", body.IDs)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		if err := q.Find(&photos).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
+		}
+
+		type JobRef struct {
+			PhotoID uint `json:"photo_id"`
+			JobID   uint `json:"job_id"`
+		}
+		var jobs []JobRef
+		for _, photo := range photos {
+			job := models.ExportJob{
+				PhotoID:       photo.ID,
+				UserID:        uid,
+				Status:        "pending",
+				ExportOptions: optsJSON,
+			}
+			if err := database.DB.Create(&job).Error; err != nil {
+				continue
+			}
+			if err := queue.PublishExportTask(job.ID, photo.ID, optsJSON); err != nil {
+				database.DB.Model(&job).Update("status", "failed")
+				continue
+			}
+			jobs = append(jobs, JobRef{PhotoID: photo.ID, JobID: job.ID})
+		}
+
+		return c.JSON(fiber.Map{"queued": len(jobs), "jobs": jobs})
+	})
+
 	fmt.Println("Starting Go Core API on :8080...")
 	if err := app.Listen(":8080"); err != nil {
 		log.Fatal(err)
