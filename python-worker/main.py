@@ -98,10 +98,12 @@ GO_CORE_URL = os.getenv("GO_CORE_URL", "http://go-core:8080")
 INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "")
 
 # Provider default base URLs (for OpenAI-compatible providers)
+# google / anthropic / zhipu use dedicated SDKs and do NOT need an entry here.
 PROVIDER_BASE_URLS = {
-    "openai": "https://api.openai.com/v1",
+    "openai":   "https://api.openai.com/v1",
+    "kimi":     "https://api.moonshot.cn/v1",   # Kimi OpenAI-compatible endpoint
     "deepseek": "https://api.deepseek.com/v1",
-    "minimax": "https://api.minimax.chat/v1",
+    "minimax":  "https://api.minimax.chat/v1",
 }
 
 STREAM_NAME = "image_processing_queue"

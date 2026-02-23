@@ -18,28 +18,49 @@ interface ProviderMeta {
 const PROVIDERS: Record<string, ProviderMeta> = {
   openai: {
     label: "OpenAI",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+    // Vision-capable models: gpt-4o, gpt-4o-mini, gpt-4-turbo, o4-mini
+    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o4-mini", "o3"],
   },
   google: {
     label: "Google Gemini",
-    models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-pro-preview", "gemini-2.0-flash-lite"],
+    // All support vision/multimodal input
+    models: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-pro-preview", "gemini-1.5-pro", "gemini-1.5-flash"],
   },
   anthropic: {
     label: "Anthropic Claude",
-    models: ["claude-opus-4-5", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"],
+    // Vision-capable via claude-3+ series
+    models: ["claude-opus-4-5", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-haiku-20240307"],
+  },
+  kimi: {
+    label: "Kimi (Moonshot)",
+    // kimi-k2.5 原生多模态；moonshot-v1-*-vision-preview 为视觉模型
+    models: [
+      "kimi-k2.5",
+      "moonshot-v1-32k-vision-preview",
+      "moonshot-v1-8k-vision-preview",
+      "moonshot-v1-128k-vision-preview",
+      "kimi-k2-0905-preview",
+      "kimi-k2-turbo-preview",
+      "kimi-k2-thinking",
+      "kimi-k2-thinking-turbo",
+    ],
+    note: "推荐使用 kimi-k2.5（原生多模态视觉）进行图片分析",
   },
   zhipu: {
     label: "智谱AI (GLM)",
-    models: ["glm-4v-plus", "glm-4v"],
+    // glm-4v 系列支持视觉输入
+    models: ["glm-4v-plus", "glm-4v-plus-0111", "glm-4v", "glm-4-plus"],
   },
   deepseek: {
     label: "DeepSeek",
-    models: ["deepseek-chat"],
-    note: "视觉支持取决于所选模型",
+    // V3.2 对话与推理；视觉 API 暂未开放
+    models: ["deepseek-chat", "deepseek-reasoner"],
+    note: "DeepSeek 视觉 API 暂未开放，图片分析可能不可用",
   },
   minimax: {
     label: "MiniMax",
-    models: ["MiniMax-Text-01", "abab6.5s-chat"],
+    // MiniMax-VL-01 支持视觉输入
+    models: ["MiniMax-VL-01", "MiniMax-Text-01", "abab6.5s-chat"],
   },
   openai_compatible: {
     label: "自定义 (OpenAI 兼容)",
