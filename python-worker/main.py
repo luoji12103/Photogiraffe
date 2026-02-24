@@ -512,6 +512,135 @@ def _apply_adjust_params(img: Image.Image, opts: dict) -> Image.Image:
     return Image.fromarray((srgb_out * 255).astype(np.uint8), mode="RGB")
 
 
+# ─── v9.1 — Overlay helpers ──────────────────────────────────────────────────
+
+def _get_font(size: int):
+    """Return a Pillow ImageFont, trying common system TTF paths then falling back."""
+    from PIL import ImageFont
+    paths = [
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    ]
+    for p in paths:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _apply_circle_avatar(base: Image.Image, avatar_img: Image.Image,
+                         opacity: float, position: str, target_px: int = 80) -> Image.Image:
+    """Paste a circular-cropped avatar onto base image."""
+    from PIL import ImageDraw as _ImageDraw
+    # Square-crop to the smaller dimension
+    sz = min(avatar_img.size)
+    lx = (avatar_img.width - sz) // 2
+    ty = (avatar_img.height - sz) // 2
+    avatar_sq = avatar_img.crop((lx, ty, lx + sz, ty + sz)).resize((target_px, target_px), Image.LANCZOS)
+
+    # Create circular mask
+    mask = Image.new("L", (target_px, target_px), 0)
+    _ImageDraw.Draw(mask).ellipse((0, 0, target_px, target_px), fill=255)
+
+    avatar_rgba = avatar_sq.convert("RGBA")
+    # Apply opacity
+    r, g, b, a = avatar_rgba.split()
+    a = a.point(lambda x: int(x * opacity))
+    avatar_rgba.putalpha(a)
+    avatar_rgba.putalpha(Image.composite(mask, Image.new("L", mask.size, 0),
+                                         mask.point(lambda x: int(x * opacity))))
+
+    iw, ih = base.size
+    margin = 20
+    positions_map = {
+        "bottom_right": (iw - target_px - margin, ih - target_px - margin),
+        "bottom_left":  (margin, ih - target_px - margin),
+        "top_right":    (iw - target_px - margin, margin),
+        "top_left":     (margin, margin),
+    }
+    pos = positions_map.get(position, positions_map["bottom_right"])
+
+    out = base.convert("RGBA")
+    out.paste(avatar_rgba, pos, mask=avatar_rgba)
+    return out.convert("RGB")
+
+
+def _apply_text_block(base: Image.Image, lines: list, position: str,
+                      opacity: float, font_size: int = 22) -> Image.Image:
+    """Render a list of text lines onto the image at the given corner."""
+    from PIL import ImageDraw as _ImageDraw
+    if not lines:
+        return base
+    font = _get_font(font_size)
+    # Measure text block
+    dummy = _ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    line_sizes = [dummy.textbbox((0, 0), ln, font=font) for ln in lines]
+    max_w = max(b[2] - b[0] for b in line_sizes) + 20  # +padding
+    line_h = max(b[3] - b[1] for b in line_sizes) + 6
+    block_h = line_h * len(lines) + 10
+
+    # Background slab (semi-transparent black)
+    slab = Image.new("RGBA", (max_w + 20, block_h), (0, 0, 0, int(180 * opacity)))
+    txt_layer = Image.new("RGBA", slab.size, (0, 0, 0, 0))
+    d = _ImageDraw.Draw(txt_layer)
+    for i, ln in enumerate(lines):
+        d.text((10, 5 + i * line_h), ln, font=font, fill=(255, 255, 255, int(255 * opacity)))
+    slab = Image.alpha_composite(slab, txt_layer)
+
+    iw, ih = base.size
+    margin = 20
+    bw, bh = slab.size
+    positions_map = {
+        "bottom_right": (iw - bw - margin, ih - bh - margin),
+        "bottom_left":  (margin, ih - bh - margin),
+        "top_right":    (iw - bw - margin, margin),
+        "top_left":     (margin, margin),
+        "bottom_center": ((iw - bw) // 2, ih - bh - margin),
+    }
+    pos = positions_map.get(position, positions_map["bottom_right"])
+
+    out = base.convert("RGBA")
+    out.paste(slab, pos, mask=slab)
+    return out.convert("RGB")
+
+
+def _apply_overlays(img: Image.Image, minio_client, opts: dict) -> Image.Image:
+    """
+    Apply v9.1 overlays in order: description → EXIF text → signature → avatar.
+    All overlay options are injected server-side (prefixed with '_').
+    """
+    position = opts.get("overlay_position", "bottom_right")
+    opacity  = float(opts.get("overlay_opacity", 0.8))
+
+    # 1. Photo description text (bottom-center)
+    if opts.get("overlay_description") and opts.get("_photo_description"):
+        desc_lines = [ln.strip() for ln in opts["_photo_description"].split("\n") if ln.strip()]
+        if desc_lines:
+            img = _apply_text_block(img, desc_lines, "bottom_center", opacity, font_size=20)
+
+    # 2. EXIF metadata text block
+    if opts.get("overlay_exif") and opts.get("_exif_lines"):
+        img = _apply_text_block(img, opts["_exif_lines"], position, opacity, font_size=20)
+
+    # 3. Signature PNG (transparent)
+    if opts.get("overlay_signature") and opts.get("_signature_path"):
+        img = _apply_watermark(img, minio_client, opts["_signature_path"], opacity, position)
+
+    # 4. Circular avatar
+    if opts.get("overlay_avatar") and opts.get("_avatar_path"):
+        try:
+            resp = minio_client.get_object("photos", opts["_avatar_path"])
+            av_data = resp.read(); resp.close(); resp.release_conn()
+            av_img = Image.open(BytesIO(av_data))
+            img = _apply_circle_avatar(img, av_img, opacity, position)
+        except Exception as e:
+            logger.warning(f"Avatar overlay failed: {e}")
+
+    return img
+
+
 def _apply_watermark(img: Image.Image, minio_client, watermark_path: str,
                      opacity: float, position: str) -> Image.Image:
     """Overlay a PNG watermark onto img. Returns original on any error."""
@@ -637,9 +766,16 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
                 min(height, 8000)
             ), Image.LANCZOS)
 
-        # 5. Watermark
+        # 5. Legacy watermark_path (backward compat)
         if wm_path:
             img = _apply_watermark(img, minio_client, wm_path, wm_opacity, wm_pos)
+
+        # 5b. v9.1 profile overlays (description / EXIF text / signature / avatar)
+        any_overlay = any(opts.get(k) for k in (
+            "overlay_description", "overlay_exif", "overlay_signature", "overlay_avatar"
+        ))
+        if any_overlay:
+            img = _apply_overlays(img, minio_client, opts)
 
         # 6. Prepare output bytes
         out_buf = BytesIO()

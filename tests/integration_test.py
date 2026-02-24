@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Photogiraffe Integration Test Suite
-测试范围: v7.3 Albums, v7.4 Profile, v7.5 Enhanced Presets, v8.1 Stats, v8.3 Search, v8.5 SSE
+测试范围: v7.3 Albums, v7.4 Profile, v7.5 Enhanced Presets, v8.1 Stats, v8.3 Search, v8.5 SSE,
+          v9.1 Export Overlays, v9.2 Photo Visibility, v9.3 Bulk Ops, v9.4 Description+Tags,
+          v9.5 Public Portfolio
 运行方式: python3 tests/integration_test.py
 需要: Go Core 运行于 http://127.0.0.1:8080
 """
@@ -453,6 +455,100 @@ def test_regression(token):
 
 
 # ─────────────────────────────────────────────────────────────────
+# v9.1 Export Overlays + v9.2 Visibility + v9.4 Description/Tags
+# ─────────────────────────────────────────────────────────────────
+
+def test_phase9(token):
+    section("v9.1–v9.5 Photo Metadata, Overlays, Bulk Ops & Public Portfolio")
+
+    # ── v9.1: overlay availability ──
+    d, status, _ = http("GET", "/api/profile/overlays", token=token)
+    check("GET /api/profile/overlays 200", status == 200, f"status={status}")
+    check("  overlays has signature field", isinstance(d, dict) and "has_signature" in d, d)
+    check("  overlays has avatar field", isinstance(d, dict) and "has_avatar" in d, d)
+
+    # ── get a photo to operate on ──
+    d, status, _ = http("GET", "/photos?page=1&limit=1", token=token)
+    photos = d.get("photos", []) if isinstance(d, dict) else []
+    if not photos:
+        check("Has at least one photo for phase9 tests", False, "no photos in library")
+        return
+    photo_id = photos[0]["ID"]
+    check(f"  Got photo ID {photo_id} for phase9 tests", True)
+
+    # ── v9.2: visibility toggle ──
+    d, status, _ = http("PUT", f"/api/photos/{photo_id}/visibility", token=token,
+                        body={"is_public": True})
+    check("PUT /api/photos/:id/visibility 200", status == 200, f"status={status}")
+    check("  is_public reflected in response", isinstance(d, dict) and d.get("is_public") is True, d)
+
+    # toggle back to private
+    d, status, _ = http("PUT", f"/api/photos/{photo_id}/visibility", token=token,
+                        body={"is_public": False})
+    check("PUT /api/photos/:id/visibility → back to private", status == 200, f"status={status}")
+    check("  is_public = false", isinstance(d, dict) and d.get("is_public") is False, d)
+
+    # ── v9.4: description + tags ──
+    d, status, _ = http("PUT", f"/api/photos/{photo_id}/description", token=token,
+                        body={"description": "Test caption", "tags": ["portrait", "night"]})
+    check("PUT /api/photos/:id/description 200", status == 200, f"status={status}")
+    check("  description reflected", isinstance(d, dict) and d.get("description") == "Test caption", d)
+
+    # verify photo detail has description (GET /photos/:id returns Go struct with capitalized keys)
+    d, status, _ = http("GET", f"/photos/{photo_id}", token=token)
+    check("GET /photos/:id still 200 after desc update", status == 200, f"status={status}")
+    check("  description persisted", isinstance(d, dict) and d.get("Description") == "Test caption", d)
+
+    # ── v9.3: bulk-delete (empty list → 400) ──
+    d, status, _ = http("POST", "/api/photos/bulk-delete", token=token,
+                        body={"ids": []})
+    check("POST /api/photos/bulk-delete empty → 400", status == 400, f"status={status}")
+
+    # bulk-delete with non-existent IDs → should 200 (no rows affected is fine)
+    d, status, _ = http("POST", "/api/photos/bulk-delete", token=token,
+                        body={"ids": [999999, 999998]})
+    check("POST /api/photos/bulk-delete non-existent IDs → 200", status == 200, f"status={status}")
+
+    # ── v9.3: bulk-album (album must exist) ──
+    # first create a temp album
+    alb, astatus, _ = http("POST", "/api/albums", token=token, body={"name": "BulkTest"})
+    if astatus in (200, 201) and isinstance(alb, dict) and "ID" in alb:
+        alb_id = alb["ID"]
+        d, status, _ = http("POST", "/api/photos/bulk-album", token=token,
+                            body={"photo_ids": [photo_id], "album_id": alb_id})
+        check("POST /api/photos/bulk-album 200", status == 200, f"status={status}")
+
+        # cleanup
+        http("DELETE", f"/api/albums/{alb_id}", token=token)
+    else:
+        check("POST /api/photos/bulk-album 200", False, f"could not create temp album: {astatus}")
+
+    # ── v9.5: public portfolio (photo needs is_public=true first) ──
+    # set one photo public
+    http("PUT", f"/api/photos/{photo_id}/visibility", token=token, body={"is_public": True})
+
+    # get current user's username
+    me, _, _ = http("GET", "/api/auth/me", token=token)
+    username = me.get("username", "admin") if isinstance(me, dict) else "admin"
+
+    d, status, _ = http("GET", f"/public/profile/{username}")
+    check("GET /public/profile/:username 200 (unauthenticated)", status == 200, f"status={status}")
+    check("  profile has username", isinstance(d, dict) and d.get("username") == username, d)
+    check("  profile has photos list", isinstance(d, dict) and isinstance(d.get("photos"), list), d)
+    check("  public photos only (no private)", all(
+        p.get("is_public", False) for p in (d.get("photos") or [])
+    ), "found private photo in public portfolio")
+
+    # unauthenticated PUT to visibility should return 401
+    d, status, _ = http("PUT", f"/api/photos/{photo_id}/visibility",
+                        body={"is_public": False})
+    check("PUT visibility without token → 401", status == 401, f"status={status}")
+
+    # cleanup: set back to private
+    http("PUT", f"/api/photos/{photo_id}/visibility", token=token, body={"is_public": False})
+
+
+# ─────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────
 
@@ -473,6 +569,7 @@ def main():
     test_stats(token)
     test_search(token)
     test_sse(token)
+    test_phase9(token)
     test_security(token)
 
     # Summary

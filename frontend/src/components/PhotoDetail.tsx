@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Share2, Link, Copy, Check } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Share2, Link, Copy, Check, Eye, EyeOff, Tag, FileText, Plus } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -49,6 +49,9 @@ interface Photo {
   MinioPath: string;
   Status: string;
   UploadedAt: string;
+  IsPublic?: boolean;
+  Description?: string;
+  Tags?: string;
   ExifData?: ExifData;
   AIAnalysis?: string | null; // null when AI analysis not yet performed
   InferredParams?: string | null; // null when AI param inference not yet run
@@ -71,6 +74,17 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [shareError, setShareError] = useState("");
+
+  // v9.1/v9.4 — description / tags / visibility
+  const [descValue, setDescValue] = useState(initialPhoto.Description ?? "");
+  const [tagsValue, setTagsValue] = useState<string[]>(() => {
+    try { const a = JSON.parse(initialPhoto.Tags ?? "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+  });
+  const [tagInput, setTagInput] = useState("");
+  const [isPublic, setIsPublic] = useState(initialPhoto.IsPublic ?? false);
+  const [savingDesc, setSavingDesc] = useState(false);
+  const [savedDesc, setSavedDesc] = useState(false);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
   const display = useDisplayDetect();
   const { authFetch } = useAuth();
 
@@ -178,6 +192,46 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
     await navigator.clipboard.writeText(url);
     setShareCopied(true);
     setTimeout(() => setShareCopied(false), 2000);
+  };
+
+  const handleSaveDescription = async () => {
+    setSavingDesc(true);
+    try {
+      const res = await authFetch(`/api/photos/${photo.ID}/description`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: descValue, tags: JSON.stringify(tagsValue) }),
+      });
+      if (res.ok) {
+        setSavedDesc(true);
+        setTimeout(() => setSavedDesc(false), 2000);
+      }
+    } finally {
+      setSavingDesc(false);
+    }
+  };
+
+  const handleToggleVisibility = async () => {
+    setTogglingVisibility(true);
+    try {
+      const next = !isPublic;
+      const res = await authFetch(`/api/photos/${photo.ID}/visibility`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_public: next }),
+      });
+      if (res.ok) setIsPublic(next);
+    } finally {
+      setTogglingVisibility(false);
+    }
+  };
+
+  const handleAddTag = () => {
+    const t = tagInput.trim().replace(/^#+/, "");
+    if (t && !tagsValue.includes(t)) {
+      setTagsValue([...tagsValue, t]);
+    }
+    setTagInput("");
   };
 
   const handleAnalyze = async () => {
@@ -418,6 +472,99 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
           {/* Export Engine */}
           <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
+
+          <div className="h-px bg-zinc-800 my-6" />
+
+          {/* Description / Tags / Visibility */}
+          <div className="space-y-4 mb-4">
+            {/* Visibility toggle */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                {isPublic ? <Eye className="w-4 h-4 text-emerald-400" /> : <EyeOff className="w-4 h-4 text-zinc-500" />}
+                公开作品集
+              </h3>
+              <button
+                onClick={handleToggleVisibility}
+                disabled={togglingVisibility}
+                className={`relative inline-flex items-center h-5 w-10 rounded-full transition-colors ${
+                  isPublic ? "bg-emerald-600" : "bg-zinc-700"
+                } disabled:opacity-50`}
+              >
+                <span className={`inline-block w-3.5 h-3.5 bg-white rounded-full shadow transform transition-transform ${
+                  isPublic ? "translate-x-5" : "translate-x-1"
+                }`} />
+              </button>
+            </div>
+            {isPublic && (
+              <p className="text-xs text-emerald-400/70">此照片已公开，可在作品集主页 /p/{"<用户名>"} 中展示</p>
+            )}
+
+            {/* Description */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-400" />
+                照片描述
+              </h3>
+              <textarea
+                value={descValue}
+                onChange={(e) => setDescValue(e.target.value)}
+                rows={3}
+                placeholder="为这张照片添加描述……"
+                className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-500 transition-colors"
+              />
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-400" />
+                关键词标签
+              </h3>
+              <div className="flex flex-wrap gap-1 min-h-6">
+                {tagsValue.map((tag) => (
+                  <span
+                    key={tag}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-zinc-800 rounded text-xs text-zinc-300 cursor-pointer hover:bg-red-900/40 hover:text-red-300 transition-colors"
+                    onClick={() => setTagsValue(tagsValue.filter((t) => t !== tag))}
+                    title="点击删除"
+                  >
+                    #{tag} ×
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); handleAddTag(); } }}
+                  placeholder="输入标签按 Enter 添加"
+                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                />
+                <button
+                  onClick={handleAddTag}
+                  className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-zinc-400 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Save button */}
+            <button
+              onClick={handleSaveDescription}
+              disabled={savingDesc}
+              className="w-full text-sm bg-blue-900/50 hover:bg-blue-800/70 text-blue-200 py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {savingDesc ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : savedDesc ? (
+                <><Check className="w-4 h-4" />已保存</>
+              ) : (
+                "保存描述与标签"
+              )}
+            </button>
+          </div>
 
           <div className="h-px bg-zinc-800 my-6" />
 

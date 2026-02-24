@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Download, Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { Download, Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Stamp } from "lucide-react";
 import type { AdjustParams } from "../lib/gl-renderer";
 import { useAuth } from "@/context/AuthContext";
 
@@ -12,6 +12,7 @@ interface ExportPanelProps {
 
 type ExportFormat = "jpeg" | "png" | "webp" | "tiff";
 type JobStatus = "idle" | "pending" | "processing" | "completed" | "failed";
+type OverlayPosition = "bottom_right" | "bottom_left" | "top_right" | "top_left" | "bottom_center";
 
 const FORMAT_LABELS: Record<ExportFormat, string> = {
   jpeg: "JPEG",
@@ -28,6 +29,14 @@ const LONG_EDGE_OPTIONS = [
   { label: "4096px", value: 4096 },
 ];
 
+const OVERLAY_POSITIONS: { label: string; value: OverlayPosition }[] = [
+  { label: "右下", value: "bottom_right" },
+  { label: "左下", value: "bottom_left" },
+  { label: "右上", value: "top_right" },
+  { label: "左上", value: "top_left" },
+  { label: "居中下", value: "bottom_center" },
+];
+
 export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps) {
   const { authFetch } = useAuth();
   const [expanded, setExpanded] = useState(false);
@@ -40,7 +49,27 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // v9.1 — Overlay state
+  const [overlayExpanded, setOverlayExpanded] = useState(false);
+  const [hasSignature, setHasSignature] = useState(false);
+  const [hasAvatar, setHasAvatar] = useState(false);
+  const [overlaySignature, setOverlaySignature] = useState(false);
+  const [overlayAvatar, setOverlayAvatar] = useState(false);
+  const [overlayExif, setOverlayExif] = useState(false);
+  const [overlayDescription, setOverlayDescription] = useState(false);
+  const [overlayPosition, setOverlayPosition] = useState<OverlayPosition>("bottom_right");
+  const [overlayOpacity, setOverlayOpacity] = useState(0.8);
+
   const supportsQuality = format === "jpeg" || format === "webp";
+
+  // Fetch overlay availability when panel expands
+  useEffect(() => {
+    if (!expanded) return;
+    authFetch("/api/profile/overlays").then(r => r.json()).then(d => {
+      setHasSignature(!!d.has_signature);
+      setHasAvatar(!!d.has_avatar);
+    }).catch(() => {});
+  }, [expanded, authFetch]);
 
   const pollStatus = useCallback(async (id: number) => {
     const interval = setInterval(async () => {
@@ -96,6 +125,13 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
           long_edge: longEdge,
           denoise_level: denoiseLevel,
           embed_exif: true,
+          // v9.1 overlays
+          overlay_signature:   overlaySignature,
+          overlay_avatar:      overlayAvatar,
+          overlay_exif:        overlayExif,
+          overlay_description: overlayDescription,
+          overlay_position:    overlayPosition,
+          overlay_opacity:     overlayOpacity,
           adjust: {
             exposure:   adjustParams.exposure,
             brightness: adjustParams.brightness,
@@ -118,7 +154,9 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
       setJobStatus("failed");
       setErrorMsg(e instanceof Error ? e.message : String(e));
     }
-}, [photoId, format, quality, longEdge, denoiseLevel, adjustParams, pollStatus]);
+}, [photoId, format, quality, longEdge, denoiseLevel,
+     overlaySignature, overlayAvatar, overlayExif, overlayDescription,
+     overlayPosition, overlayOpacity, adjustParams, pollStatus]);
 
   const handleReset = () => {
     setJobStatus("idle");
@@ -226,6 +264,85 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
             <p className="text-[10px] text-zinc-600 leading-tight">
               使用 AI 算法减少照片噪点，强度越高处理越慢
             </p>
+          </div>
+
+          {/* v9.1 — Watermark & Overlays */}
+          <div className="space-y-2 border-t border-zinc-800 pt-3">
+            <button
+              className="w-full flex items-center justify-between text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              onClick={() => setOverlayExpanded(v => !v)}
+            >
+              <span className="flex items-center gap-1.5"><Stamp className="w-3 h-3" />水印与叠加</span>
+              {overlayExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {overlayExpanded && (
+              <div className="space-y-2 pl-1">
+                {/* Overlay toggles */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { key: "signature", label: "摄影师签名", state: overlaySignature, set: setOverlaySignature, disabled: !hasSignature },
+                    { key: "avatar",    label: "头像",       state: overlayAvatar,    set: setOverlayAvatar,    disabled: !hasAvatar },
+                    { key: "exif",      label: "EXIF 参数",  state: overlayExif,      set: setOverlayExif,      disabled: false },
+                    { key: "desc",      label: "照片描述",   state: overlayDescription, set: setOverlayDescription, disabled: false },
+                  ].map(({ key, label, state, set, disabled }) => (
+                    <button
+                      key={key}
+                      disabled={disabled}
+                      onClick={() => set(!state)}
+                      className={`py-1 px-2 rounded text-xs transition-colors text-left ${
+                        disabled ? "opacity-30 cursor-not-allowed bg-zinc-800 text-zinc-600"
+                          : state ? "bg-amber-600/80 text-white"
+                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                      }`}
+                    >
+                      {state ? "✓ " : ""}{label}
+                      {disabled && <span className="ml-1 text-zinc-600">(未上传)</span>}
+                    </button>
+                  ))}
+                </div>
+                {/* Position */}
+                {(overlaySignature || overlayAvatar || overlayExif) && (
+                  <div className="space-y-1">
+                    <label className="text-xs text-zinc-600">叠加位置</label>
+                    <div className="flex flex-wrap gap-1">
+                      {OVERLAY_POSITIONS.map(({ label, value }) => (
+                        <button
+                          key={value}
+                          onClick={() => setOverlayPosition(value)}
+                          className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                            overlayPosition === value ? "bg-amber-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Opacity */}
+                {(overlaySignature || overlayAvatar || overlayExif || overlayDescription) && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <label className="text-xs text-zinc-600">不透明度</label>
+                      <span className="text-xs tabular-nums text-zinc-400">{Math.round(overlayOpacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range" min={0.2} max={1} step={0.05} value={overlayOpacity}
+                      onChange={e => setOverlayOpacity(Number(e.target.value))}
+                      className="w-full h-1.5 bg-zinc-700 rounded-full appearance-none cursor-pointer
+                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3
+                        [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full
+                        [&::-webkit-slider-thumb]:bg-amber-500"
+                    />
+                  </div>
+                )}
+                {!hasSignature && !hasAvatar && (
+                  <p className="text-[10px] text-zinc-600 leading-tight">
+                    在个人主页上传签名/头像后可叠加到导出图片上
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Status / Action */}

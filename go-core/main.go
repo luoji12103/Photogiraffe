@@ -137,6 +137,37 @@ func publicIDFromLocals(c *fiber.Ctx) string {
 	return ""
 }
 
+// buildExifLines composes a concise multi-line EXIF summary for export overlays.
+func buildExifLines(exif models.ExifData) []string {
+	var parts []string
+	if exif.CameraModel != "" {
+		parts = append(parts, exif.CameraModel)
+	}
+	var details []string
+	if exif.FocalLength != "" {
+		details = append(details, exif.FocalLength)
+	}
+	if exif.Aperture != "" {
+		details = append(details, "f/"+exif.Aperture)
+	}
+	if exif.ShutterSpeed != "" {
+		details = append(details, exif.ShutterSpeed+"s")
+	}
+	if exif.ISO != "" {
+		details = append(details, "ISO "+exif.ISO)
+	}
+	if len(details) > 0 {
+		parts = append(parts, strings.Join(details, "  ·  "))
+	}
+	if exif.LensModel != "" {
+		parts = append(parts, exif.LensModel)
+	}
+	if exif.DateTimeOriginal != "" {
+		parts = append(parts, exif.DateTimeOriginal)
+	}
+	return parts
+}
+
 // requireInternalSecret checks the X-Internal-Secret header for worker-only routes.
 func requireInternalSecret(secret string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -1122,15 +1153,42 @@ func main() {
 		if len(optsRaw) == 0 {
 			optsRaw = []byte("{}")
 		}
-		// Validate it's valid JSON
-		var optCheck map[string]interface{}
-		if err := json.Unmarshal(optsRaw, &optCheck); err != nil {
+		// Validate it's valid JSON and build a mutable map
+		var optMap map[string]interface{}
+		if err := json.Unmarshal(optsRaw, &optMap); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid export options JSON"})
 		}
 
+		// ── Server-side inject overlay assets (MinIO paths never exposed to client) ──
+		uid := userIDFromLocals(c)
+		overlayFlag := func(key string) bool { v, _ := optMap[key].(bool); return v }
+
+		if overlayFlag("overlay_signature") || overlayFlag("overlay_avatar") {
+			var profile models.UserProfile
+			database.DB.Where("user_id = ?", uid).First(&profile)
+			if overlayFlag("overlay_signature") && profile.SignaturePath != "" {
+				optMap["_signature_path"] = profile.SignaturePath
+			}
+			if overlayFlag("overlay_avatar") && profile.AvatarPath != "" {
+				optMap["_avatar_path"] = profile.AvatarPath
+			}
+		}
+		if overlayFlag("overlay_description") && photo.Description != "" {
+			optMap["_photo_description"] = photo.Description
+		}
+		if overlayFlag("overlay_exif") {
+			var exif models.ExifData
+			database.DB.Where("photo_id = ?", photoID).First(&exif)
+			lines := buildExifLines(exif)
+			if len(lines) > 0 {
+				optMap["_exif_lines"] = lines
+			}
+		}
+		optsRaw, _ = json.Marshal(optMap)
+
 		job := models.ExportJob{
 			PhotoID:       uint(photoID),
-			UserID:        userIDFromLocals(c),
+			UserID:        uid,
 			Status:        "pending",
 			ExportOptions: string(optsRaw),
 		}
@@ -1253,6 +1311,132 @@ func main() {
 		}
 
 		return c.JSON(fiber.Map{"message": "Export job status updated"})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// v9.1 — Overlay query helper & Photo description/tags/visibility
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/profile/overlays — does caller have signature/avatar for watermarking?
+	app.Get("/api/profile/overlays", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var profile models.UserProfile
+		database.DB.Where("user_id = ?", uid).First(&profile)
+		return c.JSON(fiber.Map{
+			"has_signature": profile.SignaturePath != "",
+			"has_avatar":    profile.AvatarPath != "",
+		})
+	})
+
+	// PUT /api/photos/:id/visibility — toggle public/private (v9.2)
+	app.Put("/api/photos/:id/visibility", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		var body struct {
+			IsPublic bool `json:"is_public"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		database.DB.Model(&photo).Update("is_public", body.IsPublic)
+		return c.JSON(fiber.Map{"id": photo.ID, "is_public": body.IsPublic})
+	})
+
+	// PUT /api/photos/:id/description — update description + keyword tags (v9.4)
+	app.Put("/api/photos/:id/description", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		photoID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid photo ID"})
+		}
+		var photo models.Photo
+		if result := database.DB.First(&photo, photoID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		var body struct {
+			Description string   `json:"description"`
+			Tags        []string `json:"tags"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		tagsJSON, _ := json.Marshal(body.Tags)
+		// Use raw SQL to avoid pgx jsonb cast issues when using GORM map updates.
+		if err := database.DB.Exec(
+			"UPDATE photos SET description = ?, tags = ?::jsonb, updated_at = NOW() WHERE id = ?",
+			body.Description, string(tagsJSON), photo.ID,
+		).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update"})
+		}
+		return c.JSON(fiber.Map{"description": body.Description, "tags": body.Tags})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// v9.3 — Bulk operations
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/photos/bulk-delete — delete multiple photos
+	app.Post("/api/photos/bulk-delete", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			IDs []uint `json:"ids"`
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids array required"})
+		}
+		if len(body.IDs) > 200 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "maximum 200 photos per bulk delete"})
+		}
+		q := database.DB.Where("id IN ?", body.IDs)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		result := q.Delete(&models.Photo{})
+		return c.JSON(fiber.Map{"deleted": result.RowsAffected})
+	})
+
+	// POST /api/photos/bulk-album — add multiple photos to an album
+	app.Post("/api/photos/bulk-album", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			PhotoIDs []uint `json:"photo_ids"`
+			AlbumID  uint   `json:"album_id"`
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.PhotoIDs) == 0 || body.AlbumID == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "photo_ids and album_id required"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, body.AlbumID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Album not found"})
+		}
+		if role != "SuperAdmin" && album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		var added int64
+		for _, pid := range body.PhotoIDs {
+			ap := models.AlbumPhoto{AlbumID: body.AlbumID, PhotoID: pid}
+			if err := database.DB.Where(ap).FirstOrCreate(&ap).Error; err == nil {
+				added++
+			}
+		}
+		return c.JSON(fiber.Map{"added": added, "album_id": body.AlbumID})
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -2203,6 +2387,81 @@ func main() {
 			"top_cameras":      topCameras,
 			"top_lenses":       topLenses,
 			"color_spaces":     colorSpaces,
+		})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// v9.2 — Public photographer portfolio (no authentication required)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /public/profile/:username — public-facing photographer portfolio page
+	app.Get("/public/profile/:username", func(c *fiber.Ctx) error {
+		username := strings.TrimSpace(c.Params("username"))
+		if username == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "username required"})
+		}
+		var user models.User
+		if result := database.DB.Where("username = ?", username).First(&user); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		var profile models.UserProfile
+		database.DB.Where("user_id = ?", user.ID).First(&profile)
+
+		// Public photos only (is_public = true AND completed)
+		var photos []models.Photo
+		database.DB.Preload("ExifData").
+			Where("user_id = ? AND is_public = true AND status = 'completed'", user.ID).
+			Order("uploaded_at desc").Limit(120).Find(&photos)
+
+		type PublicPhoto struct {
+			ID               uint      `json:"id"`
+			OriginalFilename string    `json:"original_filename"`
+			ThumbnailURL     string    `json:"thumbnail_url"`
+			CameraModel      string    `json:"camera_model"`
+			Description      string    `json:"description"`
+			Tags             string    `json:"tags"`
+			UploadedAt       time.Time `json:"uploaded_at"`
+		}
+		publicPhotos := make([]PublicPhoto, 0, len(photos))
+		for _, p := range photos {
+			// Derive thumbnail path from raw path
+			thumbPath := strings.Replace(p.MinioPath, "raw/", "thumbnail/", 1)
+			thumbPath = strings.TrimSuffix(thumbPath, filepath.Ext(thumbPath)) + ".webp"
+			var thumbURL string
+			if u, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", thumbPath, time.Hour, nil); err == nil {
+				thumbURL = u.String()
+			}
+			cam := ""
+			if p.ExifData.ID != 0 {
+				cam = p.ExifData.CameraModel
+			}
+			publicPhotos = append(publicPhotos, PublicPhoto{
+				ID:               p.ID,
+				OriginalFilename: p.OriginalFilename,
+				ThumbnailURL:     thumbURL,
+				CameraModel:      cam,
+				Description:      p.Description,
+				Tags:             p.Tags,
+				UploadedAt:       p.UploadedAt,
+			})
+		}
+
+		// Avatar presigned URL
+		var avatarURL string
+		if profile.AvatarPath != "" {
+			if u, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", profile.AvatarPath, time.Hour, nil); err == nil {
+				avatarURL = u.String()
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"username":    user.Username,
+			"bio":         profile.Bio,
+			"website":     profile.Website,
+			"location":    profile.Location,
+			"avatar_url":  avatarURL,
+			"photo_count": len(publicPhotos),
+			"photos":      publicPhotos,
 		})
 	})
 
