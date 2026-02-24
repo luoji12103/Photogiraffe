@@ -10,7 +10,7 @@ import {
 } from "react";
 
 export interface AuthUser {
-  id: number;
+  id: string; // UUID v4 — the public identifier (never the sequential integer PK)
   username: string;
   email: string;
   role: string;

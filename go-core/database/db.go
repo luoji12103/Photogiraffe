@@ -36,4 +36,9 @@ func Connect() {
 	if err != nil {
 		log.Fatal("Failed to auto migrate database: ", err)
 	}
+
+	// Back-fill public_id for existing users that predate the UUID migration.
+	// Uses PostgreSQL gen_random_uuid() so each row gets a unique v4 UUID.
+	db.Exec(`UPDATE users SET public_id = gen_random_uuid()::text WHERE public_id IS NULL OR public_id = ''`)
+	fmt.Println("public_id migration: back-fill complete (no-op if already populated)")
 }

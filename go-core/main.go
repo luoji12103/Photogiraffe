@@ -28,8 +28,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// requireJWT validates the Authorization: Bearer <jwt> header and writes
-// userID, userRole, username into c.Locals.
+// requireJWT validates the Authorization: Bearer <jwt> header.
+// The JWT carries a UUID public ID (never the sequential integer PK);
+// this middleware resolves it to the internal integer ID via an indexed lookup.
 func requireJWT() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		bearerStr := c.Get("Authorization")
@@ -41,7 +42,13 @@ func requireJWT() fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired token"})
 		}
-		c.Locals("userID", claims.UserID)
+		// Resolve UUID → internal integer PK (single indexed lookup; integer ID stays server-side only)
+		var row struct{ ID uint }
+		if dbErr := database.DB.Model(&models.User{}).Select("id").Where("public_id = ?", claims.UserID).Scan(&row).Error; dbErr != nil || row.ID == 0 {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User not found"})
+		}
+		c.Locals("userID", row.ID)          // uint — used by all internal handlers
+		c.Locals("userPublicID", claims.UserID) // UUID string — used by handlers that need to return user identity
 		c.Locals("userRole", claims.Role)
 		c.Locals("username", claims.Username)
 		return c.Next()
@@ -64,12 +71,20 @@ func requireRole(roles ...string) fiber.Handler {
 	}
 }
 
-// userIDFromLocals extracts the authenticated user's ID from Fiber locals.
+// userIDFromLocals extracts the authenticated user's internal integer ID from Fiber locals.
 func userIDFromLocals(c *fiber.Ctx) uint {
 	if v, ok := c.Locals("userID").(uint); ok {
 		return v
 	}
 	return 0
+}
+
+// publicIDFromLocals extracts the authenticated user's public UUID from Fiber locals.
+func publicIDFromLocals(c *fiber.Ctx) string {
+	if v, ok := c.Locals("userPublicID").(string); ok {
+		return v
+	}
+	return ""
 }
 
 // requireInternalSecret checks the X-Internal-Secret header for worker-only routes.
@@ -238,7 +253,7 @@ func main() {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Username or email already taken"})
 		}
 
-		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		accessToken, _, err := auth.GenerateAccessToken(user.PublicID, user.Username, user.Role)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 		}
@@ -266,7 +281,7 @@ func main() {
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"access_token": accessToken,
 			"user": fiber.Map{
-				"id":       user.ID,
+				"id":       user.PublicID, // UUID — never expose sequential integer PK
 				"username": user.Username,
 				"email":    user.Email,
 				"role":     user.Role,
@@ -292,7 +307,7 @@ func main() {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 		}
 
-		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		accessToken, _, err := auth.GenerateAccessToken(user.PublicID, user.Username, user.Role)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 		}
@@ -320,7 +335,7 @@ func main() {
 		return c.JSON(fiber.Map{
 			"access_token": accessToken,
 			"user": fiber.Map{
-				"id":       user.ID,
+				"id":       user.PublicID, // UUID — never expose sequential integer PK
 				"username": user.Username,
 				"email":    user.Email,
 				"role":     user.Role,
@@ -347,7 +362,7 @@ func main() {
 		var user models.User
 		database.DB.First(&user, rt.UserID)
 
-		accessToken, _, err := auth.GenerateAccessToken(user.ID, user.Username, user.Role)
+		accessToken, _, err := auth.GenerateAccessToken(user.PublicID, user.Username, user.Role)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 		}
@@ -393,7 +408,7 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
 		}
 		return c.JSON(fiber.Map{
-			"id":       user.ID,
+			"id":       user.PublicID, // UUID — never expose sequential integer PK
 			"username": user.Username,
 			"email":    user.Email,
 			"role":     user.Role,

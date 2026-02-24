@@ -11,19 +11,20 @@ import (
 // ─────────────────────────────────────────────────────────────────
 
 func TestGenerateAndValidateAccessToken(t *testing.T) {
+	// Use proper UUID v4 strings as public IDs (never sequential integers)
 	tests := []struct {
 		name     string
-		userID   uint
+		publicID string
 		username string
 		role     string
 	}{
-		{"standard user", 1, "alice", "StandardUser"},
-		{"super admin", 2, "admin", "SuperAdmin"},
-		{"zero user id", 0, "", ""},
+		{"standard user", "550e8400-e29b-41d4-a716-446655440000", "alice", "StandardUser"},
+		{"super admin", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "admin", "SuperAdmin"},
+		{"empty public id", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			signed, exp, err := GenerateAccessToken(tt.userID, tt.username, tt.role)
+			signed, exp, err := GenerateAccessToken(tt.publicID, tt.username, tt.role)
 			if err != nil {
 				t.Fatalf("GenerateAccessToken error: %v", err)
 			}
@@ -38,8 +39,8 @@ func TestGenerateAndValidateAccessToken(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ValidateAccessToken error: %v", err)
 			}
-			if claims.UserID != tt.userID {
-				t.Errorf("UserID: got %d, want %d", claims.UserID, tt.userID)
+			if claims.UserID != tt.publicID {
+				t.Errorf("UserID (UUID): got %q, want %q", claims.UserID, tt.publicID)
 			}
 			if claims.Username != tt.username {
 				t.Errorf("Username: got %q, want %q", claims.Username, tt.username)

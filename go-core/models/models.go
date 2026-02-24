@@ -3,16 +3,26 @@ package models
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type User struct {
 	gorm.Model
+	PublicID     string `gorm:"uniqueIndex"` // UUID v4 — safe for external exposure; auto-set by BeforeCreate
 	Username     string `gorm:"uniqueIndex;not null"`
 	Email        string `gorm:"uniqueIndex;not null"`
 	PasswordHash string `gorm:"not null"`
 	Role         string `gorm:"default:'StandardUser'"` // e.g., SuperAdmin, StandardUser
 	Photos       []Photo
+}
+
+// BeforeCreate auto-generates a UUID v4 PublicID if not already set.
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.PublicID == "" {
+		u.PublicID = uuid.New().String()
+	}
+	return nil
 }
 
 type Photo struct {

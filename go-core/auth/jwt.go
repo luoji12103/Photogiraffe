@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"time"
 
@@ -13,8 +12,10 @@ import (
 )
 
 // Claims is the JWT payload.
+// UserID holds the user's public UUID (never the sequential integer PK),
+// preventing enumeration of internal database IDs.
 type Claims struct {
-	UserID   uint   `json:"user_id"`
+	UserID   string `json:"uid"` // UUID v4 public identifier
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	jwt.RegisteredClaims
@@ -29,15 +30,16 @@ func jwtSecret() []byte {
 }
 
 // GenerateAccessToken issues a short-lived access token (15 min).
-func GenerateAccessToken(userID uint, username, role string) (string, time.Time, error) {
+// publicID must be the user's UUID v4 (User.PublicID), not the sequential integer PK.
+func GenerateAccessToken(publicID, username, role string) (string, time.Time, error) {
 	ttl := 15 * time.Minute
 	exp := time.Now().Add(ttl)
 	claims := Claims{
-		UserID:   userID,
+		UserID:   publicID,
 		Username: username,
 		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   fmt.Sprintf("%d", userID),
+			Subject:   publicID,
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
