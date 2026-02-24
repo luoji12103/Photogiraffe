@@ -108,3 +108,21 @@ type InviteCode struct {
 	UsedAt    *time.Time // nil until redeemed
 	ExpiresAt *time.Time // nil = never expires
 }
+
+// Album is a named collection of photos belonging to a user.
+type Album struct {
+	gorm.Model
+	UserID       uint    `gorm:"not null;index"`
+	Name         string  `gorm:"not null"`
+	Description  string
+	CoverPhotoID *uint   // nil = no explicit cover (use first photo)
+	ShareToken   string  `gorm:"uniqueIndex"` // empty = not shared
+	Photos       []Photo `gorm:"many2many:album_photos;"`
+}
+
+// AlbumPhoto is the join table between Album and Photo.
+type AlbumPhoto struct {
+	AlbumID   uint      `gorm:"primaryKey"`
+	PhotoID   uint      `gorm:"primaryKey"`
+	AddedAt   time.Time `gorm:"autoCreateTime"`
+}

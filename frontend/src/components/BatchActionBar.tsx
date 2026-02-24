@@ -1,6 +1,6 @@
 "use client";
 
-import { Trash2, Download, X, Loader2, GitCompareArrows } from "lucide-react";
+import { Trash2, Download, X, Loader2, GitCompareArrows, Images } from "lucide-react";
 
 interface BatchActionBarProps {
   selectedCount: number;
@@ -8,6 +8,7 @@ interface BatchActionBarProps {
   onBatchDelete: () => void;
   onBatchExport: () => void;
   onCompare?: () => void;
+  onAddToAlbum?: () => void;
   deleting: boolean;
   exporting: boolean;
 }
@@ -18,6 +19,7 @@ export default function BatchActionBar({
   onBatchDelete,
   onBatchExport,
   onCompare,
+  onAddToAlbum,
   deleting,
   exporting,
 }: BatchActionBarProps) {
@@ -54,6 +56,18 @@ export default function BatchActionBar({
         >
           <GitCompareArrows className="w-4 h-4" />
           对比
+        </button>
+      )}
+
+      {onAddToAlbum && (
+        <button
+          onClick={onAddToAlbum}
+          disabled={deleting || exporting}
+          className="flex items-center gap-2 text-sm text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors"
+          title="添加到相册"
+        >
+          <Images className="w-4 h-4" />
+          相册
         </button>
       )}
 

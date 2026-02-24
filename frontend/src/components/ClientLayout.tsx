@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
-import { Aperture, LogOut, Settings, Shield, MapPin } from "lucide-react";
+import { Aperture, LogOut, Settings, Shield, MapPin, Images } from "lucide-react";
 
 const PUBLIC_PATHS = ["/login", "/register", "/share/"];
 
@@ -21,6 +21,9 @@ function AppHeader() {
       <div className="flex items-center gap-2 sm:gap-3">
         <Link href="/map" className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="照片地图">
           <MapPin className="w-4 h-4" />
+        </Link>
+        <Link href="/albums" className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="我的相册">
+          <Images className="w-4 h-4" />
         </Link>
         {user.role === "SuperAdmin" && (
           <>

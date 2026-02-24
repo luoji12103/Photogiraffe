@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import PhotoGrid from "@/components/PhotoGrid";
 import UploadPanel from "@/components/UploadPanel";
 import BatchActionBar from "@/components/BatchActionBar";
+import AddToAlbumModal from "@/components/AddToAlbumModal";
 import { useAuth } from "@/context/AuthContext";
 import { Search, Filter, ChevronLeft, ChevronRight, CheckSquare } from "lucide-react";
 
@@ -51,6 +52,7 @@ export default function Home() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchExporting, setBatchExporting] = useState(false);
+  const [albumModalOpen, setAlbumModalOpen] = useState(false);
 
   // Debounce search input
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -313,9 +315,17 @@ export default function Home() {
         onBatchDelete={handleBatchDelete}
         onBatchExport={handleBatchExport}
         onCompare={selectedIds.size === 2 ? handleCompare : undefined}
+        onAddToAlbum={selectedIds.size > 0 ? () => setAlbumModalOpen(true) : undefined}
         deleting={batchDeleting}
         exporting={batchExporting}
       />
+
+      {albumModalOpen && (
+        <AddToAlbumModal
+          selectedIds={selectedIds}
+          onClose={() => setAlbumModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

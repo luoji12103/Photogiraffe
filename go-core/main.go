@@ -1405,6 +1405,259 @@ func main() {
 		return c.JSON(fiber.Map{"queued": len(jobs), "jobs": jobs})
 	})
 
+	// ── Albums ───────────────────────────────────────────────────────────────
+
+	// POST /api/albums — create a new album
+	app.Post("/api/albums", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var body struct {
+			Name         string `json:"name"`
+			Description  string `json:"description"`
+			CoverPhotoID *uint  `json:"cover_photo_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		}
+		if strings.TrimSpace(body.Name) == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name is required"})
+		}
+		album := models.Album{
+			UserID:       uid,
+			Name:         strings.TrimSpace(body.Name),
+			Description:  body.Description,
+			CoverPhotoID: body.CoverPhotoID,
+		}
+		if err := database.DB.Create(&album).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create album"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(album)
+	})
+
+	// GET /api/albums — list current user's albums (with photo count)
+	app.Get("/api/albums", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type AlbumWithCount struct {
+			models.Album
+			PhotoCount int64 `json:"photo_count"`
+		}
+		var albums []models.Album
+		database.DB.Where("user_id = ?", uid).Order("created_at desc").Find(&albums)
+		result := make([]AlbumWithCount, 0, len(albums))
+		for _, a := range albums {
+			var cnt int64
+			database.DB.Table("album_photos").Where("album_id = ?", a.ID).Count(&cnt)
+			result = append(result, AlbumWithCount{Album: a, PhotoCount: cnt})
+		}
+		return c.JSON(result)
+	})
+
+	// GET /api/albums/:id — album detail with photos
+	app.Get("/api/albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.Preload("Photos").First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		return c.JSON(album)
+	})
+
+	// PUT /api/albums/:id — update name/description/cover
+	app.Put("/api/albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var body struct {
+			Name         *string `json:"name"`
+			Description  *string `json:"description"`
+			CoverPhotoID *uint   `json:"cover_photo_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		}
+		if body.Name != nil && strings.TrimSpace(*body.Name) != "" {
+			album.Name = strings.TrimSpace(*body.Name)
+		}
+		if body.Description != nil {
+			album.Description = *body.Description
+		}
+		if body.CoverPhotoID != nil {
+			album.CoverPhotoID = body.CoverPhotoID
+		}
+		database.DB.Save(&album)
+		return c.JSON(album)
+	})
+
+	// DELETE /api/albums/:id — delete album (photos untouched)
+	app.Delete("/api/albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		// Clear join table entries first then soft-delete album
+		database.DB.Exec("DELETE FROM album_photos WHERE album_id = ?", album.ID)
+		database.DB.Delete(&album)
+		return c.JSON(fiber.Map{"message": "album deleted"})
+	})
+
+	// POST /api/albums/:id/photos — add photos to album {photo_ids: [...]}
+	app.Post("/api/albums/:id/photos", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var body struct {
+			PhotoIDs []uint `json:"photo_ids"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		}
+		added := 0
+		for _, pid := range body.PhotoIDs {
+			var photo models.Photo
+			if err := database.DB.Where("id = ? AND user_id = ?", pid, uid).First(&photo).Error; err != nil {
+				continue // skip photos not owned by user
+			}
+			// Use INSERT IGNORE equivalent — ignore duplicate key errors
+			res := database.DB.Exec("INSERT INTO album_photos (album_id, photo_id, added_at) VALUES (?, ?, NOW()) ON CONFLICT DO NOTHING", album.ID, pid)
+			if res.Error == nil {
+				added++
+			}
+		}
+		return c.JSON(fiber.Map{"added": added})
+	})
+
+	// DELETE /api/albums/:id/photos/:photo_id — remove a photo from album
+	app.Delete("/api/albums/:id/photos/:photo_id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		photoID, err2 := c.ParamsInt("photo_id")
+		if err != nil || err2 != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		database.DB.Exec("DELETE FROM album_photos WHERE album_id = ? AND photo_id = ?", album.ID, photoID)
+		return c.JSON(fiber.Map{"message": "removed"})
+	})
+
+	// POST /api/albums/:id/share — generate or refresh public share token
+	app.Post("/api/albums/:id/share", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		tokenBytes := make([]byte, 16)
+		rand.Read(tokenBytes)
+		album.ShareToken = fmt.Sprintf("%x", tokenBytes)
+		database.DB.Save(&album)
+		return c.JSON(fiber.Map{"share_token": album.ShareToken})
+	})
+
+	// DELETE /api/albums/:id/share — revoke public share
+	app.Delete("/api/albums/:id/share", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var album models.Album
+		if result := database.DB.First(&album, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		album.ShareToken = ""
+		database.DB.Save(&album)
+		return c.JSON(fiber.Map{"message": "share revoked"})
+	})
+
+	// GET /share/album/:token — public album view
+	app.Get("/share/album/:token", func(c *fiber.Ctx) error {
+		token := c.Params("token")
+		if token == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing token"})
+		}
+		var album models.Album
+		if result := database.DB.Preload("Photos").Where("share_token = ?", token).First(&album); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found or not shared"})
+		}
+		// Build thumbnail URLs for each photo
+		type PhotoThumb struct {
+			ID               uint   `json:"id"`
+			OriginalFilename string `json:"original_filename"`
+			ThumbnailURL     string `json:"thumbnail_url"`
+		}
+		thumbs := make([]PhotoThumb, 0, len(album.Photos))
+		for _, p := range album.Photos {
+			if p.Status != "completed" {
+				continue
+			}
+			thumbPath := strings.Replace(p.MinioPath, "raw/", "thumb/", 1)
+			thumbPath = thumbPath[:strings.LastIndex(thumbPath, ".")] + ".webp"
+			thumbURL, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", thumbPath, 1*time.Hour, nil)
+			thumbs = append(thumbs, PhotoThumb{
+				ID:               p.ID,
+				OriginalFilename: p.OriginalFilename,
+				ThumbnailURL:     thumbURL.String(),
+			})
+		}
+		return c.JSON(fiber.Map{
+			"album": fiber.Map{
+				"id":          album.ID,
+				"name":        album.Name,
+				"description": album.Description,
+				"created_at":  album.CreatedAt,
+			},
+			"photos": thumbs,
+		})
+	})
+
 	fmt.Println("Starting Go Core API on :8080...")
 	if err := app.Listen(":8080"); err != nil {
 		log.Fatal(err)
