@@ -17,6 +17,7 @@ interface Photo {
 interface PhotoGridProps {
   photos: Photo[];
   loading?: boolean;
+  layout?: "grid" | "masonry";
   // Multi-select props
   selectable?: boolean;
   selectedIds?: Set<number>;
@@ -29,11 +30,13 @@ function PhotoCard({
   selectable,
   selected,
   onToggle,
+  masonry = false,
 }: {
   photo: Photo;
   selectable?: boolean;
   selected?: boolean;
   onToggle?: (id: number) => void;
+  masonry?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -60,31 +63,42 @@ function PhotoCard({
   const cardContent = (
     <motion.div
       layoutId={selectable ? undefined : `photo-container-${photo.ID}`}
-      className={`group relative aspect-square overflow-hidden rounded-xl bg-zinc-200 dark:bg-zinc-800 cursor-pointer
+      className={`group relative overflow-hidden rounded-xl bg-zinc-200 dark:bg-zinc-800 cursor-pointer
+        ${masonry ? "w-full" : "aspect-square"}
         ${selectable && selected ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-zinc-950" : ""}
       `}
     >
       {photo.Status === "completed" && visible ? (
-        <motion.div layoutId={selectable ? undefined : `photo-image-${photo.ID}`} className="w-full h-full">
-          <Image
-            src={imageUrl}
-            alt={photo.OriginalFilename}
-            fill
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-            unoptimized
-          />
+        <motion.div layoutId={selectable ? undefined : `photo-image-${photo.ID}`} className={masonry ? "w-full" : "w-full h-full"}>
+          {masonry ? (
+            // In masonry mode, use natural image dimensions
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt={photo.OriginalFilename}
+              className="w-full h-auto block transition-transform duration-300 group-hover:scale-105"
+            />
+          ) : (
+            <Image
+              src={imageUrl}
+              alt={photo.OriginalFilename}
+              fill
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+              unoptimized
+            />
+          )}
         </motion.div>
       ) : photo.Status === "processing" ? (
-        <div className="flex h-full w-full items-center justify-center">
+        <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center`}>
           <span className="text-sm text-zinc-500 animate-pulse">Processing…</span>
         </div>
       ) : photo.Status === "failed" ? (
-        <div className="flex h-full w-full items-center justify-center">
+        <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center`}>
           <span className="text-sm text-red-400">Failed</span>
         </div>
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-zinc-100 dark:bg-zinc-800" />
+        <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center bg-zinc-100 dark:bg-zinc-800`} />
       )}
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
@@ -122,20 +136,30 @@ function PhotoCard({
 }
 
 // Skeleton card for loading state
-function SkeletonCard() {
+function SkeletonCard({ masonry = false }: { masonry?: boolean }) {
   return (
-    <div className="aspect-square rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+    <div className={`rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse ${masonry ? "mb-4 h-40" : "aspect-square"}`} />
   );
 }
 
 export default function PhotoGrid({
   photos,
   loading = false,
+  layout = "grid",
   selectable = false,
   selectedIds = new Set<number>(),
   onToggle,
 }: PhotoGridProps) {
   if (loading) {
+    if (layout === "masonry") {
+      return (
+        <div style={{ columns: "200px", columnGap: "1.5rem" }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonCard key={i} masonry />
+          ))}
+        </div>
+      );
+    }
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -147,6 +171,24 @@ export default function PhotoGrid({
 
   if (photos.length === 0) {
     return null;
+  }
+
+  if (layout === "masonry") {
+    return (
+      <div style={{ columns: "220px", columnGap: "1.5rem" }}>
+        {photos.map((photo) => (
+          <div key={photo.ID} style={{ breakInside: "avoid", marginBottom: "1.5rem" }}>
+            <PhotoCard
+              photo={photo}
+              selectable={selectable}
+              selected={selectedIds.has(photo.ID)}
+              onToggle={onToggle}
+              masonry
+            />
+          </div>
+        ))}
+      </div>
+    );
   }
 
   return (

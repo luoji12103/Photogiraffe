@@ -23,6 +23,7 @@ interface ExifData {
 
 interface Photo {
   ID: number;
+  UserID?: number;
   OriginalFilename: string;
   MinioPath: string;
   Status: string;

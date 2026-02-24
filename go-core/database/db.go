@@ -32,13 +32,25 @@ func Connect() {
 	fmt.Println("Successfully connected to PostgreSQL database!")
 
 	// Auto Migrate
-	err = db.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{}, &models.ExportJob{}, &models.Preset{}, &models.RefreshToken{}, &models.ShareLink{}, &models.InviteCode{}, &models.Album{}, &models.AlbumPhoto{}, &models.UserProfile{})
+	err = db.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{}, &models.ExportJob{}, &models.Preset{}, &models.RefreshToken{}, &models.ShareLink{}, &models.InviteCode{}, &models.Album{}, &models.AlbumPhoto{}, &models.UserProfile{}, &models.StorageConfig{})
 	if err != nil {
 		log.Fatal("Failed to auto migrate database: ", err)
 	}
 
 	// Back-fill public_id for existing users that predate the UUID migration.
-	// Uses PostgreSQL gen_random_uuid() so each row gets a unique v4 UUID.
 	db.Exec(`UPDATE users SET public_id = gen_random_uuid()::text WHERE public_id IS NULL OR public_id = ''`)
 	fmt.Println("public_id migration: back-fill complete (no-op if already populated)")
+
+	// Ensure a default StorageConfig row exists (id=1 = current MinIO config from env).
+	var sc models.StorageConfig
+	if db.First(&sc, 1).Error != nil {
+		db.Create(&models.StorageConfig{
+			Backend:   "minio",
+			Endpoint:  os.Getenv("MINIO_ENDPOINT"),
+			Bucket:    "photos",
+			AccessKey: os.Getenv("MINIO_ACCESS_KEY"),
+			SecretKey: os.Getenv("MINIO_SECRET_KEY"),
+			UseSSL:    false,
+		})
+	}
 }

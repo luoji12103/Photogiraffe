@@ -153,3 +153,16 @@ type UserProfile struct {
 	Website       string
 	Location      string
 }
+
+// StorageConfig holds the active object-storage backend settings (single row, id=1).
+type StorageConfig struct {
+	gorm.Model
+	Backend   string `gorm:"default:'minio'"` // minio | s3 | webdav
+	Endpoint  string
+	Bucket    string
+	AccessKey string
+	SecretKey string `gorm:"type:text"`
+	RootPath  string
+	UseSSL    bool   `gorm:"default:true"`
+	Region    string
+}

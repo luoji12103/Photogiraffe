@@ -3,7 +3,9 @@
 Photogiraffe Integration Test Suite
 测试范围: v7.3 Albums, v7.4 Profile, v7.5 Enhanced Presets, v8.1 Stats, v8.3 Search, v8.5 SSE,
           v9.1 Export Overlays, v9.2 Photo Visibility, v9.3 Bulk Ops, v9.4 Description+Tags,
-          v9.5 Public Portfolio
+          v9.5 Public Portfolio,
+          v10.1 Admin Stats+User Mgmt, v10.2 XMP Parser, v10.3 Gallery Sort, v10.4 Photo UserID,
+          v10.5 Storage Config
 运行方式: python3 tests/integration_test.py
 需要: Go Core 运行于 http://127.0.0.1:8080
 """
@@ -549,6 +551,151 @@ def test_phase9(token):
 
 
 # ─────────────────────────────────────────────────────────────────
+# Phase 10: Admin UI, XMP Parser, Masonry/Sort, View/Edit Split, Storage
+# ─────────────────────────────────────────────────────────────────
+
+def test_phase10(token):
+    section("v10.1–v10.5  Admin Stats · XMP Parser · Gallery Sort · Storage Config")
+
+    # ── v10.1: admin stats dashboard ──
+    d, status, _ = http("GET", "/api/admin/stats", token=token)
+    check("GET /api/admin/stats 200", status == 200, f"status={status}")
+    check("  stats has total_users",  isinstance(d, dict) and "total_users"  in d, d)
+    check("  stats has total_photos", isinstance(d, dict) and "total_photos" in d, d)
+    check("  stats has total_albums", isinstance(d, dict) and "total_albums" in d, d)
+    check("  stats has total_presets",isinstance(d, dict) and "total_presets"in d, d)
+    check("  stats has top_users list",
+          isinstance(d, dict) and isinstance(d.get("top_users"), list), d)
+
+    # ── v10.1: enhanced admin users list ──
+    d, status, _ = http("GET", "/api/admin/users", token=token)
+    check("GET /api/admin/users 200 (phase10)", status == 200, f"status={status}")
+    users = d if isinstance(d, list) else (d.get("users") or []) if isinstance(d, dict) else []
+    if users:
+        first = users[0]
+        check("  user has photo_count field",  "photo_count" in first, first)
+        check("  user has public_id field",    "public_id"   in first or "PublicID" in first, first)
+        first_user_id = first.get("id") or first.get("ID")
+    else:
+        check("  user has photo_count field", False, "no users returned")
+        first_user_id = None
+
+    # ── v10.1: user photos endpoint ──
+    if first_user_id:
+        d, status, _ = http("GET", f"/api/admin/users/{first_user_id}/photos", token=token)
+        check(f"GET /api/admin/users/:id/photos 200", status == 200, f"status={status}")
+        check("  returns photos list",
+              isinstance(d, dict) and isinstance(d.get("photos"), list), d)
+
+    # ── v10.1: role change (self-change attempt should fail) ──
+    me, _, _ = http("GET", "/api/auth/me", token=token)
+    my_id = me.get("id") if isinstance(me, dict) else None
+    if my_id:
+        d, status, _ = http("PUT", f"/api/admin/users/{my_id}/role",
+                            token=token, body={"role": "User"})
+        check("PUT /api/admin/users/self/role → 400 (self-change blocked)",
+              status == 400, f"status={status}")
+
+    # ── v10.3: gallery sort parameters ──
+    for sort_val in ("date_desc", "date_asc", "filename", "camera", "iso"):
+        d, status, _ = http("GET", f"/photos?sort={sort_val}&page=1&limit=1", token=token)
+        check(f"GET /photos?sort={sort_val} 200", status == 200, f"status={status}")
+
+    # ── v10.4: photo UserID field present in response ──
+    d, status, _ = http("GET", "/photos?page=1&limit=1", token=token)
+    photos = d.get("photos", []) if isinstance(d, dict) else []
+    if photos:
+        photo_id = photos[0]["ID"]
+        pd, pstatus, _ = http("GET", f"/photos/{photo_id}", token=token)
+        check("GET /photos/:id 200 (v10.4 check)", pstatus == 200, f"status={pstatus}")
+        check("  photo has UserID field", isinstance(pd, dict) and "UserID" in pd, pd)
+    else:
+        check("  photo UserID check", False, "no photos in library")
+
+    # ── v10.2: XMP preset parse ──
+    xmp_content = b"""<?xml version="1.0" encoding="utf-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+      crs:Exposure2012="0.5"
+      crs:Contrast2012="20"
+      crs:Highlights2012="-30"
+      crs:Shadows2012="25"
+      crs:Whites2012="10"
+      crs:Blacks2012="-15"
+      crs:Clarity2012="15"
+      crs:Vibrance="10"
+      crs:Saturation="5"
+    />
+  </rdf:RDF>
+</x:xmpmeta>"""
+
+    boundary = b"----TestBoundary7890"
+    body_parts = (
+        b"--" + boundary + b"\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="test.xmp"\r\n'
+        b"Content-Type: application/xml\r\n\r\n" +
+        xmp_content + b"\r\n"
+        b"--" + boundary + b"--\r\n"
+    )
+    form_req = urllib.request.Request(
+        BASE_URL + "/api/presets/parse-xmp",
+        data=body_parts,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(form_req, timeout=10) as resp:
+            xmp_status = resp.status
+            xmp_data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        xmp_status = e.code
+        try:
+            xmp_data = json.loads(e.read())
+        except Exception:
+            xmp_data = {}
+    except Exception as ex:
+        xmp_status = 0
+        xmp_data = {"error": str(ex)}
+
+    check("POST /api/presets/parse-xmp 200", xmp_status == 200, f"status={xmp_status}, body={xmp_data}")
+    check("  parse result has params dict",
+          isinstance(xmp_data, dict) and isinstance(xmp_data.get("params"), dict), xmp_data)
+    check("  exposure parsed correctly",
+          isinstance(xmp_data, dict) and xmp_data.get("params", {}).get("exposure") == 0.5, xmp_data)
+    check("  format field present",
+          isinstance(xmp_data, dict) and xmp_data.get("format") in ("xmp", "lrtemplate"), xmp_data)
+
+    # ── v10.5: storage config ──
+    d, status, _ = http("GET", "/api/admin/storage", token=token)
+    check("GET /api/admin/storage 200", status == 200, f"status={status}")
+    check("  storage has backend field",   isinstance(d, dict) and "backend"   in d, d)
+    check("  storage has endpoint field",  isinstance(d, dict) and "endpoint"  in d, d)
+    check("  secret_key masked",
+          isinstance(d, dict) and d.get("secret_key", "") in ("", "********"), d)
+
+    # PUT /api/admin/storage — update root_path and restore
+    orig_region = d.get("region", "") if isinstance(d, dict) else ""
+    updated, upstatus, _ = http("PUT", "/api/admin/storage", token=token,
+                                body={"region": "us-east-1-test"})
+    check("PUT /api/admin/storage 200", upstatus == 200, f"status={upstatus}")
+    check("  updated region reflected",
+          isinstance(updated, dict) and updated.get("region") == "us-east-1-test", updated)
+
+    # restore original region
+    http("PUT", "/api/admin/storage", token=token, body={"region": orig_region})
+
+    # POST /api/admin/storage/test — basic validation (should return 200 even if connection fails
+    # as long as a config row exists)
+    d, status, _ = http("POST", "/api/admin/storage/test", token=token)
+    check("POST /api/admin/storage/test 200 or 503",
+          status in (200, 503), f"status={status}")
+
+
+# ─────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────
 
@@ -570,6 +717,7 @@ def main():
     test_search(token)
     test_sse(token)
     test_phase9(token)
+    test_phase10(token)
     test_security(token)
 
     # Summary

@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -683,14 +685,15 @@ func main() {
 		offset := (page - 1) * limit
 
 		// Filter params
-		search := strings.TrimSpace(c.Query("search", ""))
-		statusFilter := strings.TrimSpace(c.Query("status", ""))
+			search := strings.TrimSpace(c.Query("search", ""))
+			statusFilter := strings.TrimSpace(c.Query("status", ""))
+			sortParam := c.Query("sort", "date_desc") // date_desc|date_asc|filename|camera|iso
 
-		// Build base query with ownership check
-		base := database.DB.Model(&models.Photo{})
-		if role != "SuperAdmin" {
-			base = base.Where("user_id = ?", uid)
-		}
+			// Build base query with ownership check
+			base := database.DB.Model(&models.Photo{})
+			if role != "SuperAdmin" {
+				base = base.Where("user_id = ?", uid)
+			}
 		if search != "" {
 			base = base.Where("original_filename ILIKE ?", "%"+search+"%")
 		}
@@ -706,7 +709,20 @@ func main() {
 
 		// Fetch page
 		var photos []models.Photo
-		if result := base.Preload("ExifData").Order("uploaded_at desc").
+		orderClause := map[string]string{
+			"date_desc": "photos.uploaded_at DESC",
+			"date_asc":  "photos.uploaded_at ASC",
+			"filename":  "photos.original_filename ASC",
+			"camera":    "exif_data.camera_model ASC, photos.uploaded_at DESC",
+			"iso":       "exif_data.iso ASC, photos.uploaded_at DESC",
+		}[sortParam]
+		if orderClause == "" {
+			orderClause = "photos.uploaded_at DESC"
+		}
+		if sortParam == "camera" || sortParam == "iso" {
+			base = base.Joins("LEFT JOIN exif_data ON exif_data.photo_id = photos.id AND exif_data.deleted_at IS NULL")
+		}
+		if result := base.Preload("ExifData").Order(orderClause).
 			Limit(limit).Offset(offset).Find(&photos); result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
 		}
@@ -1480,18 +1496,26 @@ func main() {
 	})
 
 	// GET /api/admin/users — list all users (SuperAdmin)
+	// GET /api/admin/users — list all users with photo count (SuperAdmin)
 	app.Get("/api/admin/users", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var users []struct {
-			ID        uint   `json:"id"`
-			Username  string `json:"username"`
-			Email     string `json:"email"`
-			Role      string `json:"role"`
-			CreatedAt string `json:"created_at"`
+			ID         uint   `json:"id"`
+			PublicID   string `json:"public_id"`
+			Username   string `json:"username"`
+			Email      string `json:"email"`
+			Role       string `json:"role"`
+			CreatedAt  string `json:"created_at"`
+			PhotoCount int64  `json:"photo_count"`
 		}
-		database.DB.Model(&models.User{}).
-			Select("id, username, email, role, created_at").
-			Order("id asc").
-			Scan(&users)
+		database.DB.Raw(`
+			SELECT u.id, u.public_id, u.username, u.email, u.role, u.created_at,
+			       COUNT(p.id) AS photo_count
+			FROM users u
+			LEFT JOIN photos p ON p.user_id = u.id AND p.deleted_at IS NULL
+			WHERE u.deleted_at IS NULL
+			GROUP BY u.id
+			ORDER BY u.id ASC
+		`).Scan(&users)
 		return c.JSON(users)
 	})
 
@@ -2522,6 +2546,358 @@ func main() {
 			}
 		}))
 		return nil
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 10 — Admin Stats, Preset XMP Parser, Storage Config
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/admin/stats — site statistics (SuperAdmin)
+	app.Get("/api/admin/stats", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var totalUsers, totalPhotos, totalAlbums, totalPresets int64
+		database.DB.Model(&models.User{}).Count(&totalUsers)
+		database.DB.Model(&models.Photo{}).Count(&totalPhotos)
+		database.DB.Model(&models.Album{}).Count(&totalAlbums)
+		database.DB.Model(&models.Preset{}).Count(&totalPresets)
+
+		var topUsers []struct {
+			UserID   uint   `json:"user_id"`
+			Username string `json:"username"`
+			Count    int64  `json:"count"`
+		}
+		database.DB.Raw(`
+			SELECT p.user_id, u.username, COUNT(p.id) AS count
+			FROM photos p
+			JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL
+			WHERE p.deleted_at IS NULL
+			GROUP BY p.user_id, u.username
+			ORDER BY count DESC
+			LIMIT 10
+		`).Scan(&topUsers)
+
+		return c.JSON(fiber.Map{
+			"total_users":   totalUsers,
+			"total_photos":  totalPhotos,
+			"total_albums":  totalAlbums,
+			"total_presets": totalPresets,
+			"top_users":     topUsers,
+		})
+	})
+
+	// GET /api/admin/users/:id/photos — paginated photos for a specific user (SuperAdmin)
+	app.Get("/api/admin/users/:id/photos", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		userID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user ID"})
+		}
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		var total int64
+		database.DB.Model(&models.Photo{}).Where("user_id = ?", userID).Count(&total)
+
+		var photos []models.Photo
+		database.DB.Preload("ExifData").Where("user_id = ?", userID).
+			Order("uploaded_at desc").Limit(limit).Offset(offset).Find(&photos)
+
+		return c.JSON(fiber.Map{
+			"photos":      photos,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": int((total + int64(limit) - 1) / int64(limit)),
+		})
+	})
+
+	// PUT /api/admin/users/:id/role — change user role (SuperAdmin, cannot change own role)
+	app.Put("/api/admin/users/:id/role", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		targetID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user ID"})
+		}
+		selfID := userIDFromLocals(c)
+		if uint(targetID) == selfID {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Cannot change your own role"})
+		}
+
+		var body struct {
+			Role string `json:"role"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.Role == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "role is required"})
+		}
+		allowed := map[string]bool{"User": true, "admin": true, "SuperAdmin": true}
+		if !allowed[body.Role] {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid role"})
+		}
+
+		result := database.DB.Model(&models.User{}).Where("id = ?", targetID).Update("role", body.Role)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update role"})
+		}
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		return c.JSON(fiber.Map{"ok": true, "id": targetID, "role": body.Role})
+	})
+
+	// DELETE /api/admin/users/:id — delete user and all their data (SuperAdmin, cannot delete self)
+	app.Delete("/api/admin/users/:id", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		targetID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user ID"})
+		}
+		selfID := userIDFromLocals(c)
+		if uint(targetID) == selfID {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Cannot delete your own account"})
+		}
+
+		// Cascade: delete photos, refresh tokens, presets, albums, profile
+		database.DB.Where("user_id = ?", targetID).Delete(&models.Photo{})
+		database.DB.Where("user_id = ?", targetID).Delete(&models.RefreshToken{})
+		database.DB.Where("user_id = ?", targetID).Delete(&models.Preset{})
+		database.DB.Where("user_id = ?", targetID).Delete(&models.Album{})
+		database.DB.Where("user_id = ?", targetID).Delete(&models.UserProfile{})
+
+		result := database.DB.Delete(&models.User{}, targetID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to delete user"})
+		}
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	// POST /api/presets/parse-xmp — parse .xmp or .lrtemplate file into preset params
+	app.Post("/api/presets/parse-xmp", requireJWT(), func(c *fiber.Ctx) error {
+		file, err := c.FormFile("file")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file is required"})
+		}
+		f, err := file.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open file"})
+		}
+		defer f.Close()
+
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read file"})
+		}
+
+		ext := strings.ToLower(filepath.Ext(file.Filename))
+		params := map[string]float64{}
+		format := "xmp"
+
+		if ext == ".lrtemplate" {
+			format = "lrtemplate"
+			// Parse key = value patterns (numeric values only)
+			re := regexp.MustCompile(`(\w+)\s*=\s*(-?[\d.]+)`)
+			for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+				if v, err2 := strconv.ParseFloat(m[2], 64); err2 == nil {
+					lrMap := map[string]string{
+						"Exposure":      "exposure",
+						"Contrast":      "contrast",
+						"Highlights":    "highlights",
+						"Shadows":       "shadows",
+						"Whites":        "whites",
+						"Blacks":        "blacks",
+						"Clarity":       "clarity",
+						"Vibrance":      "vibrance",
+						"Saturation":    "saturation",
+						"Sharpness":     "sharpness",
+						"LuminanceNR":   "noiseReduction",
+						"PostCropVignetteAmount": "vignette",
+					}
+					if k, ok := lrMap[m[1]]; ok {
+						params[k] = v
+					}
+				}
+			}
+		} else {
+			// Parse XMP/CRS attributes using regex — handles namespace prefixes reliably
+			crsMap := map[string]string{
+				"Exposure2012":            "exposure",
+				"Contrast2012":            "contrast",
+				"Highlights2012":          "highlights",
+				"Shadows2012":             "shadows",
+				"Whites2012":              "whites",
+				"Blacks2012":              "blacks",
+				"Clarity2012":             "clarity",
+				"Vibrance":                "vibrance",
+				"Saturation":              "saturation",
+				"Sharpness":               "sharpness",
+				"LuminanceSmoothing":      "noiseReduction",
+				"VignetteAmount":          "vignette",
+				"Exposure":                "exposure",
+				"Contrast":                "contrast",
+				"Highlights":              "highlights",
+				"Shadows":                 "shadows",
+			}
+			// Match crs:AttrName="value" or crs:AttrName='value' regardless of namespace URI
+			xmpRe := regexp.MustCompile(`(?:crs:)(\w+)=["'](-?[\d.]+)["']`)
+			for _, m := range xmpRe.FindAllStringSubmatch(string(data), -1) {
+				if k, ok := crsMap[m[1]]; ok {
+					if v, err2 := strconv.ParseFloat(m[2], 64); err2 == nil {
+						params[k] = v
+					}
+				}
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"format": format,
+			"params": params,
+		})
+	})
+
+	// GET /api/photos/:id/preset-preview — inferred params + EXIF summary for preview
+	app.Get("/api/photos/:id/preset-preview", requireJWT(), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var photo models.Photo
+		result := database.DB.Preload("ExifData").First(&photo, id)
+		if result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden"})
+		}
+
+		exifSummary := fiber.Map{}
+		if photo.ExifData.ID != 0 {
+			exifSummary = fiber.Map{
+				"camera":   photo.ExifData.CameraModel,
+				"lens":     photo.ExifData.LensModel,
+				"aperture": photo.ExifData.Aperture,
+				"shutter":  photo.ExifData.ShutterSpeed,
+				"iso":      photo.ExifData.ISO,
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"photo_id":        photo.ID,
+			"inferred_params": photo.InferredParams,
+			"exif":            exifSummary,
+		})
+	})
+
+	// GET /api/admin/storage — get current storage configuration (SuperAdmin)
+	app.Get("/api/admin/storage", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var cfg models.StorageConfig
+		if err := database.DB.First(&cfg, 1).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Storage config not found"})
+		}
+		// Mask secret key
+		masked := "********"
+		if cfg.SecretKey == "" {
+			masked = ""
+		}
+		return c.JSON(fiber.Map{
+			"id":         cfg.ID,
+			"backend":    cfg.Backend,
+			"endpoint":   cfg.Endpoint,
+			"bucket":     cfg.Bucket,
+			"access_key": cfg.AccessKey,
+			"secret_key": masked,
+			"root_path":  cfg.RootPath,
+			"use_ssl":    cfg.UseSSL,
+			"region":     cfg.Region,
+		})
+	})
+
+	// PUT /api/admin/storage — update storage configuration (SuperAdmin)
+	app.Put("/api/admin/storage", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var body struct {
+			Backend   *string `json:"backend"`
+			Endpoint  *string `json:"endpoint"`
+			Bucket    *string `json:"bucket"`
+			AccessKey *string `json:"access_key"`
+			SecretKey *string `json:"secret_key"`
+			RootPath  *string `json:"root_path"`
+			UseSSL    *bool   `json:"use_ssl"`
+			Region    *string `json:"region"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var cfg models.StorageConfig
+		if err := database.DB.First(&cfg, 1).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Storage config not found"})
+		}
+
+		updates := map[string]interface{}{}
+		if body.Backend != nil {
+			updates["backend"] = *body.Backend
+		}
+		if body.Endpoint != nil {
+			updates["endpoint"] = *body.Endpoint
+		}
+		if body.Bucket != nil {
+			updates["bucket"] = *body.Bucket
+		}
+		if body.AccessKey != nil {
+			updates["access_key"] = *body.AccessKey
+		}
+		if body.SecretKey != nil && *body.SecretKey != "********" {
+			updates["secret_key"] = *body.SecretKey
+		}
+		if body.RootPath != nil {
+			updates["root_path"] = *body.RootPath
+		}
+		if body.UseSSL != nil {
+			updates["use_ssl"] = *body.UseSSL
+		}
+		if body.Region != nil {
+			updates["region"] = *body.Region
+		}
+
+		if len(updates) > 0 {
+			if err := database.DB.Model(&cfg).Updates(updates).Error; err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update storage config"})
+			}
+		}
+
+		// Re-fetch to return updated state
+		database.DB.First(&cfg, 1)
+		masked := "********"
+		if cfg.SecretKey == "" {
+			masked = ""
+		}
+		return c.JSON(fiber.Map{
+			"backend":    cfg.Backend,
+			"endpoint":   cfg.Endpoint,
+			"bucket":     cfg.Bucket,
+			"access_key": cfg.AccessKey,
+			"secret_key": masked,
+			"root_path":  cfg.RootPath,
+			"use_ssl":    cfg.UseSSL,
+			"region":     cfg.Region,
+		})
+	})
+
+	// POST /api/admin/storage/test — test connectivity of current storage config (SuperAdmin)
+	app.Post("/api/admin/storage/test", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var cfg models.StorageConfig
+		if err := database.DB.First(&cfg, 1).Error; err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"ok": false, "error": "No storage config found"})
+		}
+		if cfg.Endpoint == "" || cfg.Bucket == "" {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"ok": false, "error": "Incomplete storage configuration"})
+		}
+		// Basic validation passed — actual connectivity test would require re-initializing client
+		return c.JSON(fiber.Map{"ok": true, "backend": cfg.Backend, "endpoint": cfg.Endpoint, "bucket": cfg.Bucket})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

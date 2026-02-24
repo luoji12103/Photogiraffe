@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield, CircleCheck, CircleX, KeyRound, Plus, Copy, Check } from "lucide-react";
+import {
+  ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield,
+  CircleCheck, CircleX, KeyRound, Plus, Copy, Check,
+  BarChart2, Trash2, UserCog, ImageIcon, ChevronDown,
+} from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
 
@@ -15,13 +19,25 @@ interface FeatureFlag {
 
 interface User {
   id: number;
+  public_id: string;
   username: string;
   email: string;
   role: string;
   created_at: string;
+  photo_count: number;
 }
 
-type Tab = "flags" | "users" | "invites";
+interface StatsData {
+  total_users: number;
+  total_photos: number;
+  pending_photos: number;
+  total_albums: number;
+  total_presets: number;
+  recent_users: number;
+  top_users: { username: string; photo_count: number }[];
+}
+
+type Tab = "stats" | "flags" | "users" | "invites";
 
 interface InviteCode {
   ID: number;
@@ -45,7 +61,11 @@ const FLAG_LABELS: Record<string, string> = {
 
 export default function AdminPage() {
   const { authFetch } = useAuth();
-  const [tab, setTab] = useState<Tab>("flags");
+  const [tab, setTab] = useState<Tab>("stats");
+
+  // Stats state
+  const [stats, setStats] = useState<StatsData | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   // Feature Flags state
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
@@ -56,12 +76,23 @@ export default function AdminPage() {
   // Users state
   const [users, setUsers] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
+  const [roleChanging, setRoleChanging] = useState<number | null>(null);
+  const [deletingUser, setDeletingUser] = useState<number | null>(null);
+  const [userMsg, setUserMsg] = useState("");
 
   // Invite Codes state
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(true);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  const loadStats = useCallback(() => {
+    setStatsLoading(true);
+    authFetch("/api/admin/stats")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => setStats(data))
+      .finally(() => setStatsLoading(false));
+  }, [authFetch]);
 
   const loadFlags = useCallback(() => {
     setFlagsLoading(true);
@@ -75,13 +106,9 @@ export default function AdminPage() {
     setUsersLoading(true);
     authFetch("/api/admin/users")
       .then((r) => r.ok ? r.json() : [])
-      .then((data) => setUsers(data))
+      .then((data) => setUsers(Array.isArray(data) ? data : []))
       .finally(() => setUsersLoading(false));
   }, [authFetch]);
-
-  useEffect(() => { loadFlags(); }, [loadFlags]);
-  useEffect(() => { if (tab === "users") loadUsers(); }, [tab, loadUsers]);
-  useEffect(() => { if (tab === "invites") loadInviteCodes(); }, [tab]); // eslint-disable-line
 
   const loadInviteCodes = useCallback(() => {
     setInvitesLoading(true);
@@ -90,6 +117,11 @@ export default function AdminPage() {
       .then((data) => setInviteCodes(Array.isArray(data) ? data : []))
       .finally(() => setInvitesLoading(false));
   }, [authFetch]);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => { if (tab === "flags") loadFlags(); }, [tab, loadFlags]);
+  useEffect(() => { if (tab === "users") loadUsers(); }, [tab, loadUsers]);
+  useEffect(() => { if (tab === "invites") loadInviteCodes(); }, [tab, loadInviteCodes]);
 
   const handleCreateInvite = async () => {
     setCreatingInvite(true);
@@ -130,6 +162,48 @@ export default function AdminPage() {
     }
   };
 
+  const handleRoleChange = async (userId: number, newRole: string) => {
+    setRoleChanging(userId);
+    setUserMsg("");
+    try {
+      const res = await authFetch(`/api/admin/users/${userId}/role`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (res.ok) {
+        setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role: newRole } : u));
+        setUserMsg("角色已更新");
+        setTimeout(() => setUserMsg(""), 3000);
+      }
+    } finally {
+      setRoleChanging(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: number, username: string) => {
+    if (!confirm(`确定要删除用户 "${username}" 及其所有数据吗？此操作不可撤销。`)) return;
+    setDeletingUser(userId);
+    setUserMsg("");
+    try {
+      const res = await authFetch(`/api/admin/users/${userId}`, { method: "DELETE" });
+      if (res.ok) {
+        setUsers((prev) => prev.filter((u) => u.id !== userId));
+        setUserMsg(`用户 ${username} 已删除`);
+        setTimeout(() => setUserMsg(""), 3000);
+      }
+    } finally {
+      setDeletingUser(null);
+    }
+  };
+
+  const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
+    { key: "stats", label: "系统统计", icon: <BarChart2 size={16} /> },
+    { key: "flags", label: "功能开关", icon: <ToggleRight size={16} /> },
+    { key: "users", label: "用户管理", icon: <Users size={16} /> },
+    { key: "invites", label: "邀请码", icon: <KeyRound size={16} /> },
+  ];
+
   return (
     <AuthGuard adminOnly>
       <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans">
@@ -147,27 +221,79 @@ export default function AdminPage() {
                 <Shield size={28} className="text-zinc-400 hidden sm:block" />
                 Admin Panel
               </h1>
-              <p className="text-zinc-500 dark:text-zinc-400 mt-1 text-sm">功能开关与用户管理</p>
+              <p className="text-zinc-500 dark:text-zinc-400 mt-1 text-sm">系统管理与配置</p>
             </div>
           </header>
 
           {/* Tabs */}
-          <div className="flex gap-1 mb-6 sm:mb-8 bg-zinc-900 rounded-xl p-1 w-fit">
-            {(["flags", "users", "invites"] as Tab[]).map((t) => (
+          <div className="flex flex-wrap gap-1 mb-6 sm:mb-8 bg-zinc-900 rounded-xl p-1 w-fit">
+            {TABS.map(({ key, label, icon }) => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
+                key={key}
+                onClick={() => setTab(key)}
                 className={`flex items-center gap-2 px-4 sm:px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  tab === t
+                  tab === key
                     ? "bg-zinc-700 text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
-                {t === "flags" ? <ToggleRight size={16} /> : t === "users" ? <Users size={16} /> : <KeyRound size={16} />}
-                {t === "flags" ? "功能开关" : t === "users" ? "用户管理" : "邀请码"}
+                {icon}
+                <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
           </div>
+
+          {/* Stats Tab */}
+          {tab === "stats" && (
+            <div>
+              {statsLoading ? (
+                <div className="flex justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+                </div>
+              ) : stats ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {[
+                      { label: "总用户数", value: stats.total_users, sub: `近30天新增 ${stats.recent_users}` },
+                      { label: "总照片数", value: stats.total_photos, sub: `处理中 ${stats.pending_photos}` },
+                      { label: "相册数", value: stats.total_albums, sub: "" },
+                      { label: "预设数", value: stats.total_presets, sub: "" },
+                    ].map(({ label, value, sub }) => (
+                      <div key={label} className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+                        <div className="text-2xl font-bold tabular-nums">{value.toLocaleString()}</div>
+                        <div className="text-sm font-medium text-zinc-400 mt-1">{label}</div>
+                        {sub && <div className="text-xs text-zinc-600 mt-0.5">{sub}</div>}
+                      </div>
+                    ))}
+                  </div>
+                  {stats.top_users && stats.top_users.length > 0 && (
+                    <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+                      <h3 className="text-sm font-semibold text-zinc-400 mb-4 uppercase tracking-wide">上传最多的用户</h3>
+                      <div className="space-y-3">
+                        {stats.top_users.map((u, i) => (
+                          <div key={u.username} className="flex items-center gap-3">
+                            <span className="text-zinc-600 text-sm w-5 text-right">{i + 1}</span>
+                            <div className="flex-1 flex items-center gap-2">
+                              <span className="text-sm font-medium min-w-[80px]">{u.username}</span>
+                              <div className="flex-1 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className="bg-zinc-400 h-full"
+                                  style={{ width: `${stats.top_users[0].photo_count > 0 ? (u.photo_count / stats.top_users[0].photo_count) * 100 : 0}%` }}
+                                />
+                              </div>
+                            </div>
+                            <span className="text-sm text-zinc-500 tabular-nums">{u.photo_count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-16 text-zinc-600">无法加载统计数据</div>
+              )}
+            </div>
+          )}
 
           {/* Feature Flags Tab */}
           {tab === "flags" && (
@@ -228,20 +354,27 @@ export default function AdminPage() {
           {/* Users Tab */}
           {tab === "users" && (
             <div>
+              {userMsg && (
+                <div className="mb-4 px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-sm">
+                  {userMsg}
+                </div>
+              )}
               {usersLoading ? (
                 <div className="flex justify-center py-20">
                   <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
                 </div>
               ) : (
                 <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
-                  <table className="w-full text-sm min-w-[500px]">
+                  <table className="w-full text-sm min-w-[640px]">
                     <thead>
                       <tr className="border-b border-zinc-800 bg-zinc-950/50">
                         <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium w-12">ID</th>
                         <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium">用户名</th>
                         <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium hidden sm:table-cell">邮箱</th>
                         <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium">角色</th>
+                        <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium hidden md:table-cell">照片</th>
                         <th className="text-left px-4 sm:px-5 py-3 text-zinc-500 font-medium hidden md:table-cell">注册时间</th>
+                        <th className="text-right px-4 sm:px-5 py-3 text-zinc-500 font-medium">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -252,26 +385,61 @@ export default function AdminPage() {
                         >
                           <td className="px-4 sm:px-5 py-3 text-zinc-500">{u.id}</td>
                           <td className="px-4 sm:px-5 py-3 font-medium">{u.username}</td>
-                          <td className="px-4 sm:px-5 py-3 text-zinc-400 hidden sm:table-cell">{u.email}</td>
+                          <td className="px-4 sm:px-5 py-3 text-zinc-400 hidden sm:table-cell truncate max-w-[160px]">{u.email}</td>
                           <td className="px-4 sm:px-5 py-3">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                u.role === "SuperAdmin"
-                                  ? "bg-amber-900/30 text-amber-400 border border-amber-800/50"
-                                  : "bg-zinc-800 text-zinc-400 border border-zinc-700"
-                              }`}
-                            >
-                              {u.role}
-                            </span>
+                            <div className="relative inline-block">
+                              <select
+                                value={u.role}
+                                disabled={roleChanging === u.id}
+                                onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                                className={`appearance-none text-xs font-medium px-2 py-1 pr-6 rounded border cursor-pointer transition-colors
+                                  ${u.role === "SuperAdmin"
+                                    ? "border-amber-700 text-amber-400 bg-amber-900/20"
+                                    : "border-zinc-700 text-zinc-400 bg-zinc-800/50"
+                                  }`}
+                              >
+                                <option value="StandardUser">StandardUser</option>
+                                <option value="SuperAdmin">SuperAdmin</option>
+                              </select>
+                              <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500" />
+                            </div>
+                          </td>
+                          <td className="px-4 sm:px-5 py-3 hidden md:table-cell">
+                            <div className="flex items-center gap-1 text-zinc-400">
+                              <ImageIcon size={12} />
+                              <span>{u.photo_count}</span>
+                            </div>
                           </td>
                           <td className="px-4 sm:px-5 py-3 text-zinc-500 text-xs hidden md:table-cell" suppressHydrationWarning>
                             {u.created_at ? new Date(u.created_at).toLocaleDateString("zh-CN") : "—"}
+                          </td>
+                          <td className="px-4 sm:px-5 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Link
+                                href={`/admin/users/${u.id}/photos`}
+                                className="p-1.5 text-zinc-500 hover:text-zinc-200 transition-colors rounded"
+                                title="查看用户照片"
+                              >
+                                <UserCog size={15} />
+                              </Link>
+                              <button
+                                onClick={() => handleDeleteUser(u.id, u.username)}
+                                disabled={deletingUser === u.id}
+                                className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors rounded disabled:opacity-50"
+                                title="删除用户"
+                              >
+                                {deletingUser === u.id
+                                  ? <Loader2 size={15} className="animate-spin" />
+                                  : <Trash2 size={15} />
+                                }
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
                       {users.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-5 py-10 text-center text-zinc-600">
+                          <td colSpan={7} className="px-5 py-10 text-center text-zinc-600">
                             暂无用户数据
                           </td>
                         </tr>

@@ -2,24 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Share2, Link, Copy, Check, Eye, EyeOff, Tag, FileText, Plus } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
 import { useAuth } from "@/context/AuthContext";
-import { parseGPSCoords, formatCoords } from "@/lib/gpsUtils";
 import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
 import ExportPanel from "./ExportPanel";
 import PresetPanel from "./PresetPanel";
-
-const MiniMap = dynamic(() => import("./MiniMapLeaflet"), {
-  ssr: false,
-  loading: () => <div className="h-[180px] rounded-lg bg-zinc-800 animate-pulse" />,
-});
 
 interface ExifData {
   CameraModel: string;
@@ -45,13 +38,11 @@ interface AIAnalysis {
 
 interface Photo {
   ID: number;
+  UserID?: number;
   OriginalFilename: string;
   MinioPath: string;
   Status: string;
   UploadedAt: string;
-  IsPublic?: boolean;
-  Description?: string;
-  Tags?: string;
   ExifData?: ExifData;
   AIAnalysis?: string | null; // null when AI analysis not yet performed
   InferredParams?: string | null; // null when AI param inference not yet run
@@ -70,23 +61,12 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [inferError, setInferError] = useState("");
   const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
-  const [shareLoading, setShareLoading] = useState(false);
-  const [shareToken, setShareToken] = useState<string | null>(null);
-  const [shareCopied, setShareCopied] = useState(false);
-  const [shareError, setShareError] = useState("");
-
-  // v9.1/v9.4 — description / tags / visibility
-  const [descValue, setDescValue] = useState(initialPhoto.Description ?? "");
-  const [tagsValue, setTagsValue] = useState<string[]>(() => {
-    try { const a = JSON.parse(initialPhoto.Tags ?? "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
-  });
-  const [tagInput, setTagInput] = useState("");
-  const [isPublic, setIsPublic] = useState(initialPhoto.IsPublic ?? false);
-  const [savingDesc, setSavingDesc] = useState(false);
-  const [savedDesc, setSavedDesc] = useState(false);
-  const [togglingVisibility, setTogglingVisibility] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const display = useDisplayDetect();
-  const { authFetch } = useAuth();
+  const { authFetch, user } = useAuth();
+
+  // Determine if the current user can edit (owns the photo or is SuperAdmin)
+  const canEdit = user && (Number(user.id) === photo.UserID || user.role === "SuperAdmin");
 
   const handleClose = () => {
     // router.back() closes the intercepting modal and returns to gallery;
@@ -171,69 +151,6 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
     }
   };
 
-  const handleShare = async () => {
-    setShareLoading(true);
-    setShareError("");
-    try {
-      const res = await authFetch(`/api/photos/${photo.ID}/share`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create share link");
-      setShareToken(data.token);
-    } catch (err: any) {
-      setShareError(err.message);
-    } finally {
-      setShareLoading(false);
-    }
-  };
-
-  const handleCopyShareLink = async () => {
-    if (!shareToken) return;
-    const url = `${window.location.origin}/share/${shareToken}`;
-    await navigator.clipboard.writeText(url);
-    setShareCopied(true);
-    setTimeout(() => setShareCopied(false), 2000);
-  };
-
-  const handleSaveDescription = async () => {
-    setSavingDesc(true);
-    try {
-      const res = await authFetch(`/api/photos/${photo.ID}/description`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: descValue, tags: JSON.stringify(tagsValue) }),
-      });
-      if (res.ok) {
-        setSavedDesc(true);
-        setTimeout(() => setSavedDesc(false), 2000);
-      }
-    } finally {
-      setSavingDesc(false);
-    }
-  };
-
-  const handleToggleVisibility = async () => {
-    setTogglingVisibility(true);
-    try {
-      const next = !isPublic;
-      const res = await authFetch(`/api/photos/${photo.ID}/visibility`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_public: next }),
-      });
-      if (res.ok) setIsPublic(next);
-    } finally {
-      setTogglingVisibility(false);
-    }
-  };
-
-  const handleAddTag = () => {
-    const t = tagInput.trim().replace(/^#+/, "");
-    if (t && !tagsValue.includes(t)) {
-      setTagsValue([...tagsValue, t]);
-    }
-    setTagInput("");
-  };
-
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
     setAnalysisError("");
@@ -289,6 +206,21 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       >
         <X size={24} />
       </button>
+
+      {/* Edit Mode Toggle — only for owners/SuperAdmin */}
+      {canEdit && (
+        <button
+          onClick={() => setEditMode((v) => !v)}
+          className={`absolute top-6 right-20 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+            editMode
+              ? "bg-amber-600/80 hover:bg-amber-500/90 text-white"
+              : "bg-zinc-800/80 hover:bg-zinc-700/90 text-zinc-200"
+          }`}
+        >
+          {editMode ? <EyeOff size={14} /> : <Pencil size={14} />}
+          {editMode ? "退出编辑" : "编辑"}
+        </button>
+      )}
 
       <div className="w-full h-full flex flex-col md:flex-row">
         {/* Image Section */}
@@ -411,22 +343,14 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                     </p>
                   </div>
                 )}
-                {(!!exif.GPSLatitude && !!exif.GPSLongitude) && (() => {
-                  const coords = parseGPSCoords(exif.GPSLatitude, exif.GPSLongitude);
-                  if (!coords) return null;
-                  const [lat, lng] = coords;
-                  return (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <MapPin className="w-4 h-4 text-zinc-400 flex-shrink-0" />
-                        <p className="text-sm text-zinc-300">{formatCoords(lat, lng)}</p>
-                      </div>
-                      <div className="rounded-lg overflow-hidden border border-zinc-700">
-                        <MiniMap lat={lat} lng={lng} label={photo.OriginalFilename} height="180px" />
-                      </div>
-                    </div>
-                  );
-                })()}
+                {(!!exif.GPSLatitude && !!exif.GPSLongitude) && (
+                  <div className="flex items-center gap-3">
+                    <MapPin className="w-4 h-4 text-zinc-400" />
+                    <p className="text-sm text-zinc-300">
+                      {parseFloat(exif.GPSLatitude).toFixed(4)}, {parseFloat(exif.GPSLongitude).toFixed(4)}
+                    </p>
+                  </div>
+                )}
                 {exif.Software && (
                   <div className="flex items-center gap-3">
                     <Zap className="w-4 h-4 text-zinc-400" />
@@ -464,202 +388,67 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
           <div className="h-px bg-zinc-800 my-6" />
 
-          {/* Adjustment Sliders */}
-          <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
+          {/* Edit-only panels: Adjustments, Presets, Export, AI Suggest */}
+          {editMode ? (
+            <>
+              {/* Adjustment Sliders */}
+              <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
 
-          {/* Preset Management */}
-          <PresetPanel params={adjustParams} onApply={setAdjustParams} photoId={photo.ID} />
+              {/* Preset Management */}
+              <PresetPanel params={adjustParams} onApply={setAdjustParams} />
 
-          {/* Export Engine */}
-          <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
+              {/* Export Engine */}
+              <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
 
-          <div className="h-px bg-zinc-800 my-6" />
+              <div className="h-px bg-zinc-800 my-6" />
 
-          {/* Description / Tags / Visibility */}
-          <div className="space-y-4 mb-4">
-            {/* Visibility toggle */}
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
-                {isPublic ? <Eye className="w-4 h-4 text-emerald-400" /> : <EyeOff className="w-4 h-4 text-zinc-500" />}
-                公开作品集
-              </h3>
-              <button
-                onClick={handleToggleVisibility}
-                disabled={togglingVisibility}
-                className={`relative inline-flex items-center h-5 w-10 rounded-full transition-colors ${
-                  isPublic ? "bg-emerald-600" : "bg-zinc-700"
-                } disabled:opacity-50`}
-              >
-                <span className={`inline-block w-3.5 h-3.5 bg-white rounded-full shadow transform transition-transform ${
-                  isPublic ? "translate-x-5" : "translate-x-1"
-                }`} />
-              </button>
-            </div>
-            {isPublic && (
-              <p className="text-xs text-emerald-400/70">此照片已公开，可在作品集主页 /p/{"<用户名>"} 中展示</p>
-            )}
-
-            {/* Description */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-400" />
-                照片描述
-              </h3>
-              <textarea
-                value={descValue}
-                onChange={(e) => setDescValue(e.target.value)}
-                rows={3}
-                placeholder="为这张照片添加描述……"
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-zinc-500 transition-colors"
-              />
-            </div>
-
-            {/* Tags */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
-                <Tag className="w-4 h-4 text-amber-400" />
-                关键词标签
-              </h3>
-              <div className="flex flex-wrap gap-1 min-h-6">
-                {tagsValue.map((tag) => (
-                  <span
-                    key={tag}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-zinc-800 rounded text-xs text-zinc-300 cursor-pointer hover:bg-red-900/40 hover:text-red-300 transition-colors"
-                    onClick={() => setTagsValue(tagsValue.filter((t) => t !== tag))}
-                    title="点击删除"
-                  >
-                    #{tag} ×
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); handleAddTag(); } }}
-                  placeholder="输入标签按 Enter 添加"
-                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
-                />
-                <button
-                  onClick={handleAddTag}
-                  className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-zinc-400 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Save button */}
-            <button
-              onClick={handleSaveDescription}
-              disabled={savingDesc}
-              className="w-full text-sm bg-blue-900/50 hover:bg-blue-800/70 text-blue-200 py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {savingDesc ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : savedDesc ? (
-                <><Check className="w-4 h-4" />已保存</>
-              ) : (
-                "保存描述与标签"
-              )}
-            </button>
-          </div>
-
-          <div className="h-px bg-zinc-800 my-6" />
-
-          {/* Share Link */}
-          <div className="space-y-3 mb-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
-                <Share2 className="w-4 h-4 text-sky-400" />
-                Share
-              </h3>
-              {!shareToken && (
-                <button
-                  onClick={handleShare}
-                  disabled={shareLoading}
-                  className="text-xs bg-sky-900/60 hover:bg-sky-800/80 text-sky-200 px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
-                >
-                  {shareLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    "Create Link"
+              {/* AI Param Suggestion */}
+              <div className="space-y-3 mb-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-violet-400" />
+                    AI Suggest
+                  </h3>
+                  {!isInferring && (
+                    <button
+                      onClick={handleInferParams}
+                      className="text-xs bg-violet-900/60 hover:bg-violet-800/80 text-violet-200 px-3 py-1.5 rounded-md transition-colors"
+                    >
+                      {inferredSuggestion || photo.InferredParams ? "Re-suggest" : "Suggest Params"}
+                    </button>
                   )}
-                </button>
-              )}
-            </div>
-            {shareError && (
-              <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{shareError}</div>
-            )}
-            {shareToken && (
-              <div className="bg-sky-900/20 border border-sky-700/30 rounded-md p-3 space-y-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-400">
-                  <Link className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{typeof window !== 'undefined' ? `${window.location.origin}/share/${shareToken}` : `/share/${shareToken}`}</span>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleCopyShareLink}
-                    className="flex items-center gap-1.5 text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded transition-colors flex-1 justify-center"
-                  >
-                    {shareCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    {shareCopied ? "Copied!" : "Copy Link"}
-                  </button>
-                  <button
-                    onClick={() => setShareToken(null)}
-                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-1.5 rounded transition-colors"
-                  >
-                    Revoke
-                  </button>
-                </div>
+                {isInferring && (
+                  <div className="flex items-center text-zinc-500 py-2">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    <span className="text-sm">AI is analysing image…</span>
+                  </div>
+                )}
+                {inferError && (
+                  <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{inferError}</div>
+                )}
+                {inferredSuggestion && (
+                  <div className="bg-violet-900/20 border border-violet-700/30 rounded-md p-3 space-y-1 text-xs text-zinc-300">
+                    <div className="flex justify-between"><span className="text-zinc-500">Exposure</span><span>{inferredSuggestion.exposure.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">Brightness</span><span>{inferredSuggestion.brightness.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">Contrast</span><span>{inferredSuggestion.contrast.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">Saturation</span><span>{inferredSuggestion.saturation.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-zinc-500">ACES Tone Map</span><span>{inferredSuggestion.tonemap ? "On" : "Off"}</span></div>
+                    <button
+                      onClick={() => setAdjustParams(inferredSuggestion!)}
+                      className="w-full mt-2 text-xs bg-violet-600 hover:bg-violet-500 text-white py-1.5 rounded transition-colors"
+                    >
+                      Apply Suggestion
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-
-          <div className="h-px bg-zinc-800 my-6" />
-
-          {/* AI Param Suggestion */}
-          <div className="space-y-3 mb-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-violet-400" />
-                AI Suggest
-              </h3>
-              {!isInferring && (
-                <button
-                  onClick={handleInferParams}
-                  className="text-xs bg-violet-900/60 hover:bg-violet-800/80 text-violet-200 px-3 py-1.5 rounded-md transition-colors"
-                >
-                  {inferredSuggestion || photo.InferredParams ? "Re-suggest" : "Suggest Params"}
-                </button>
-              )}
+            </>
+          ) : canEdit ? (
+            <div className="text-xs text-zinc-600 text-center py-4">
+              点击右上角 <Pencil size={11} className="inline" /> <span className="font-medium text-zinc-500">编辑</span> 按钮以调整参数、应用预设或导出
             </div>
-            {isInferring && (
-              <div className="flex items-center text-zinc-500 py-2">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                <span className="text-sm">AI is analysing image…</span>
-              </div>
-            )}
-            {inferError && (
-              <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{inferError}</div>
-            )}
-            {inferredSuggestion && (
-              <div className="bg-violet-900/20 border border-violet-700/30 rounded-md p-3 space-y-1 text-xs text-zinc-300">
-                <div className="flex justify-between"><span className="text-zinc-500">Exposure</span><span>{inferredSuggestion.exposure.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-zinc-500">Brightness</span><span>{inferredSuggestion.brightness.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-zinc-500">Contrast</span><span>{inferredSuggestion.contrast.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-zinc-500">Saturation</span><span>{inferredSuggestion.saturation.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-zinc-500">ACES Tone Map</span><span>{inferredSuggestion.tonemap ? "On" : "Off"}</span></div>
-                <button
-                  onClick={() => setAdjustParams(inferredSuggestion!)}
-                  className="w-full mt-2 text-xs bg-violet-600 hover:bg-violet-500 text-white py-1.5 rounded transition-colors"
-                >
-                  Apply Suggestion
-                </button>
-              </div>
-            )}
-          </div>
+          ) : null}
 
           {/* AI Analysis Section */}
           <div className="space-y-4">
