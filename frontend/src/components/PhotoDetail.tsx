@@ -2,17 +2,24 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Share2, Link, Copy, Check } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
 import { useAuth } from "@/context/AuthContext";
+import { parseGPSCoords, formatCoords } from "@/lib/gpsUtils";
 import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
 import ExportPanel from "./ExportPanel";
 import PresetPanel from "./PresetPanel";
+
+const MiniMap = dynamic(() => import("./MiniMapLeaflet"), {
+  ssr: false,
+  loading: () => <div className="h-[180px] rounded-lg bg-zinc-800 animate-pulse" />,
+});
 
 interface ExifData {
   CameraModel: string;
@@ -350,14 +357,22 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                     </p>
                   </div>
                 )}
-                {(!!exif.GPSLatitude && !!exif.GPSLongitude) && (
-                  <div className="flex items-center gap-3">
-                    <MapPin className="w-4 h-4 text-zinc-400" />
-                    <p className="text-sm text-zinc-300">
-                      {parseFloat(exif.GPSLatitude).toFixed(4)}, {parseFloat(exif.GPSLongitude).toFixed(4)}
-                    </p>
-                  </div>
-                )}
+                {(!!exif.GPSLatitude && !!exif.GPSLongitude) && (() => {
+                  const coords = parseGPSCoords(exif.GPSLatitude, exif.GPSLongitude);
+                  if (!coords) return null;
+                  const [lat, lng] = coords;
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <MapPin className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                        <p className="text-sm text-zinc-300">{formatCoords(lat, lng)}</p>
+                      </div>
+                      <div className="rounded-lg overflow-hidden border border-zinc-700">
+                        <MiniMap lat={lat} lng={lng} label={photo.OriginalFilename} height="180px" />
+                      </div>
+                    </div>
+                  );
+                })()}
                 {exif.Software && (
                   <div className="flex items-center gap-3">
                     <Zap className="w-4 h-4 text-zinc-400" />

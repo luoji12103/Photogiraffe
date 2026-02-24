@@ -507,6 +507,66 @@ func main() {
 		return c.JSON(fiber.Map{"message": "Status updated successfully"})
 	})
 
+	// API to get photos with GPS coordinates for map display
+	app.Get("/api/photos/map", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		type MapPoint struct {
+			ID               uint    `json:"id"`
+			Lat              float64 `json:"lat"`
+			Lng              float64 `json:"lng"`
+			ThumbnailPath    string  `json:"thumbnail_path"`
+			OriginalFilename string  `json:"original_filename"`
+		}
+
+		type row struct {
+			PhotoID          uint
+			GPSLatitude      string
+			GPSLongitude     string
+			MinioPath        string
+			OriginalFilename string
+		}
+
+		query := database.DB.Table("photos").
+			Select("photos.id AS photo_id, exif_data.gps_latitude, exif_data.gps_longitude, photos.minio_path, photos.original_filename").
+			Joins("JOIN exif_data ON exif_data.photo_id = photos.id").
+			Where("photos.deleted_at IS NULL AND exif_data.deleted_at IS NULL").
+			Where("exif_data.gps_latitude != '' AND exif_data.gps_longitude != ''").
+			Where("photos.status = 'completed'")
+
+		if role != "SuperAdmin" {
+			query = query.Where("photos.user_id = ?", uid)
+		}
+
+		var rows []row
+		if err := query.Scan(&rows).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch map data"})
+		}
+
+		points := make([]MapPoint, 0, len(rows))
+		for _, r := range rows {
+			var lat, lng float64
+			if _, err := fmt.Sscanf(r.GPSLatitude, "%f", &lat); err != nil {
+				continue
+			}
+			if _, err := fmt.Sscanf(r.GPSLongitude, "%f", &lng); err != nil {
+				continue
+			}
+			thumbPath := strings.Replace(r.MinioPath, "raw/", "thumbnail/", 1)
+			thumbPath = thumbPath[:len(thumbPath)-len(filepath.Ext(thumbPath))] + ".webp"
+			points = append(points, MapPoint{
+				ID:               r.PhotoID,
+				Lat:              lat,
+				Lng:              lng,
+				ThumbnailPath:    thumbPath,
+				OriginalFilename: r.OriginalFilename,
+			})
+		}
+
+		return c.JSON(points)
+	})
+
 	// API to get list of photos — supports pagination, search, status filter
 	// Query params: page (default 1), limit (default 20, max 100), search (filename), status (processing|completed|failed)
 	app.Get("/photos", requireJWT(), func(c *fiber.Ctx) error {

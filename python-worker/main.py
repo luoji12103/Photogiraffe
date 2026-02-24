@@ -206,7 +206,32 @@ def process_image(minio_client, photo_id, minio_path):
             def get_tag(key):
                 return str(tags[key]) if key in tags else ""
 
+            def dms_to_decimal(dms_str: str, ref_str: str) -> str:
+                """Convert exifread DMS string (e.g. '[48, 8, 17173/500]') + ref to signed decimal."""
+                import re as _re
+                if not dms_str:
+                    return ""
+                # Try direct float first (already decimal)
+                try:
+                    val = float(dms_str)
+                    if ref_str in ('S', 'W') and val > 0:
+                        val = -val
+                    return f"{val:.6f}"
+                except (ValueError, TypeError):
+                    pass
+                # Parse "[deg, min, sec/denom]" format
+                tokens = _re.findall(r'(\d+)(?:/(\d+))?', str(dms_str))
+                if len(tokens) < 3:
+                    return dms_str  # fallback
+                def _to_f(t): return int(t[0]) / (int(t[1]) if t[1] else 1)
+                decimal = _to_f(tokens[0]) + _to_f(tokens[1]) / 60.0 + _to_f(tokens[2]) / 3600.0
+                if ref_str in ('S', 'W'):
+                    decimal = -decimal
+                return f"{decimal:.6f}"
+
             if tags:
+                lat_ref = get_tag("GPS GPSLatitudeRef")
+                lon_ref = get_tag("GPS GPSLongitudeRef")
                 exif_data = {
                     "CameraModel": get_tag("Image Model"),
                     "LensModel": get_tag("EXIF LensModel"),
@@ -215,8 +240,8 @@ def process_image(minio_client, photo_id, minio_path):
                     "ShutterSpeed": get_tag("EXIF ExposureTime"),
                     "ISO": get_tag("EXIF ISOSpeedRatings"),
                     "ColorSpace": get_tag("EXIF ColorSpace"),
-                    "GPSLatitude": get_tag("GPS GPSLatitude"),
-                    "GPSLongitude": get_tag("GPS GPSLongitude"),
+                    "GPSLatitude": dms_to_decimal(get_tag("GPS GPSLatitude"), lat_ref),
+                    "GPSLongitude": dms_to_decimal(get_tag("GPS GPSLongitude"), lon_ref),
                     "Software": get_tag("Image Software"),
                     "DateTimeOriginal": get_tag("EXIF DateTimeOriginal")
                 }
