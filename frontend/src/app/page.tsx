@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import PhotoGrid from "@/components/PhotoGrid";
 import UploadPanel from "@/components/UploadPanel";
 import BatchActionBar from "@/components/BatchActionBar";
@@ -33,6 +34,7 @@ const STATUS_OPTIONS = [
 const LIMIT = 20;
 
 export default function Home() {
+  const router = useRouter();
   const { authFetch, user } = useAuth();
 
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -112,6 +114,12 @@ export default function Home() {
   const handleClearSelection = () => {
     setSelectedIds(new Set());
     setSelectable(false);
+  };
+
+  const handleCompare = () => {
+    if (selectedIds.size !== 2) return;
+    const [a, b] = Array.from(selectedIds);
+    router.push(`/compare?a=${a}&b=${b}`);
   };
 
   const handleBatchDelete = async () => {
@@ -304,6 +312,7 @@ export default function Home() {
         onClearSelection={handleClearSelection}
         onBatchDelete={handleBatchDelete}
         onBatchExport={handleBatchExport}
+        onCompare={selectedIds.size === 2 ? handleCompare : undefined}
         deleting={batchDeleting}
         exporting={batchExporting}
       />

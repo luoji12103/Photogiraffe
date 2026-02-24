@@ -1,12 +1,13 @@
 "use client";
 
-import { Trash2, Download, X, Loader2 } from "lucide-react";
+import { Trash2, Download, X, Loader2, GitCompareArrows } from "lucide-react";
 
 interface BatchActionBarProps {
   selectedCount: number;
   onClearSelection: () => void;
   onBatchDelete: () => void;
   onBatchExport: () => void;
+  onCompare?: () => void;
   deleting: boolean;
   exporting: boolean;
 }
@@ -16,6 +17,7 @@ export default function BatchActionBar({
   onClearSelection,
   onBatchDelete,
   onBatchExport,
+  onCompare,
   deleting,
   exporting,
 }: BatchActionBarProps) {
@@ -42,6 +44,18 @@ export default function BatchActionBar({
         )}
         {exporting ? "Queuing…" : "Export"}
       </button>
+
+      {selectedCount === 2 && onCompare && (
+        <button
+          onClick={onCompare}
+          disabled={deleting || exporting}
+          className="flex items-center gap-2 text-sm text-violet-400 hover:text-violet-300 disabled:opacity-50 transition-colors"
+          title="对比两张照片"
+        >
+          <GitCompareArrows className="w-4 h-4" />
+          对比
+        </button>
+      )}
 
       <button
         onClick={onBatchDelete}
