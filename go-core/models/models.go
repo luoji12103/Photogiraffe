@@ -25,6 +25,7 @@ type Photo struct {
 	ExifData         ExifData
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters
+	AppliedPresetID  *uint   // nullable; last preset explicitly applied
 }
 
 type ExifData struct {
@@ -78,6 +79,8 @@ type Preset struct {
 	Name         string `gorm:"not null"`
 	Description  string
 	AdjustParams string `gorm:"type:jsonb;not null"` // serialized AdjustParams JSON
+	Platforms    string `gorm:"type:jsonb"`          // JSON array, e.g. ["Lightroom","Capture One"]
+	FilePath     string                               // MinIO path for downloadable preset file
 }
 
 // RefreshToken keeps a hashed record of an issued refresh token.

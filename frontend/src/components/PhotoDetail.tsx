@@ -414,7 +414,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
           <AdjustPanel params={adjustParams} onChange={setAdjustParams} />
 
           {/* Preset Management */}
-          <PresetPanel params={adjustParams} onApply={setAdjustParams} />
+          <PresetPanel params={adjustParams} onApply={setAdjustParams} photoId={photo.ID} />
 
           {/* Export Engine */}
           <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />

@@ -828,6 +828,7 @@ func main() {
 			Name         string `json:"name"`
 			Description  string `json:"description"`
 			AdjustParams string `json:"adjust_params"` // raw JSON string
+			Platforms    string `json:"platforms"`     // raw JSON array string, e.g. '["Lightroom"]'
 		}
 		if err := c.BodyParser(&input); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
@@ -843,12 +844,16 @@ func main() {
 		if err := json.Unmarshal([]byte(input.AdjustParams), &check); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid adjust_params JSON"})
 		}
+		if input.Platforms == "" {
+			input.Platforms = "[]"
+		}
 
 		preset := models.Preset{
 			UserID:       userIDFromLocals(c),
 			Name:         input.Name,
 			Description:  input.Description,
 			AdjustParams: input.AdjustParams,
+			Platforms:    input.Platforms,
 		}
 		if result := database.DB.Create(&preset); result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create preset"})
@@ -883,6 +888,133 @@ func main() {
 		}
 		database.DB.Delete(&preset)
 		return c.JSON(fiber.Map{"message": "Preset deleted"})
+	})
+
+	// PUT /api/presets/:id — update name/description/platforms
+	app.Put("/api/presets/:id", requireJWT(), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var preset models.Preset
+		if result := database.DB.First(&preset, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Preset not found"})
+		}
+		if role != "SuperAdmin" && preset.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		var body struct {
+			Name        *string `json:"name"`
+			Description *string `json:"description"`
+			Platforms   *string `json:"platforms"` // raw JSON array string
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Name != nil && strings.TrimSpace(*body.Name) != "" {
+			preset.Name = strings.TrimSpace(*body.Name)
+		}
+		if body.Description != nil {
+			preset.Description = *body.Description
+		}
+		if body.Platforms != nil {
+			preset.Platforms = *body.Platforms
+		}
+		database.DB.Save(&preset)
+		return c.JSON(preset)
+	})
+
+	// POST /api/presets/:id/apply/:photo_id — persist preset application to photo
+	app.Post("/api/presets/:id/apply/:photo_id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		presetID, err := c.ParamsInt("id")
+		photoID, err2 := c.ParamsInt("photo_id")
+		if err != nil || err2 != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var preset models.Preset
+		if result := database.DB.First(&preset, presetID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "preset not found"})
+		}
+		var photo models.Photo
+		if result := database.DB.Where("id = ? AND user_id = ?", photoID, uid).First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		pid := uint(presetID)
+		photo.AppliedPresetID = &pid
+		database.DB.Save(&photo)
+		return c.JSON(fiber.Map{"message": "preset applied", "preset_id": presetID, "photo_id": photoID})
+	})
+
+	// GET /api/photos/:id/preset — get applied preset for a photo
+	app.Get("/api/photos/:id/preset", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		photoID := c.Params("id")
+		var photo models.Photo
+		if result := database.DB.Where("id = ? AND user_id = ?", photoID, uid).First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		if photo.AppliedPresetID == nil {
+			return c.JSON(fiber.Map{"preset": nil})
+		}
+		var preset models.Preset
+		if result := database.DB.First(&preset, *photo.AppliedPresetID); result.Error != nil {
+			return c.JSON(fiber.Map{"preset": nil})
+		}
+		return c.JSON(fiber.Map{"preset": preset})
+	})
+
+	// POST /api/presets/:id/file — upload a preset file (.xmp, .cube, etc.)
+	app.Post("/api/presets/:id/file", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id := c.Params("id")
+		var preset models.Preset
+		if result := database.DB.First(&preset, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "preset not found"})
+		}
+		if preset.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		file, err := c.FormFile("file")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file required"})
+		}
+		ext := filepath.Ext(file.Filename)
+		objectName := fmt.Sprintf("presets/%d/%s%s", uid, uuid.New().String(), ext)
+		src, err := file.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to open file"})
+		}
+		defer src.Close()
+		_, err = storage.MinioClient.PutObject(c.Context(), "photos", objectName, src, file.Size, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "upload failed"})
+		}
+		preset.FilePath = objectName
+		database.DB.Save(&preset)
+		presigned, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", objectName, time.Hour, nil)
+		return c.JSON(fiber.Map{"file_path": objectName, "download_url": presigned.String()})
+	})
+
+	// GET /api/presets/:id/file — get download URL for preset file
+	app.Get("/api/presets/:id/file", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id := c.Params("id")
+		role := c.Locals("userRole").(string)
+		var preset models.Preset
+		if result := database.DB.First(&preset, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "preset not found"})
+		}
+		if role != "SuperAdmin" && preset.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		if preset.FilePath == "" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no file attached"})
+		}
+		presigned, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", preset.FilePath, time.Hour, nil)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate URL"})
+		}
+		return c.JSON(fiber.Map{"download_url": presigned.String(), "file_path": preset.FilePath})
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
