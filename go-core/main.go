@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"photogiraffe/core/auth"
@@ -24,9 +26,57 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
+	"github.com/valyala/fasthttp"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// ── SSE Hub ──────────────────────────────────────────────────────────────────
+// Per-user channels for Server-Sent Events.
+// Each connected browser tab gets its own buffered channel.
+
+var (
+	sseMu  sync.RWMutex
+	sseHub = make(map[uint][]chan string)
+)
+
+func sseSubscribe(userID uint) chan string {
+	ch := make(chan string, 32)
+	sseMu.Lock()
+	sseHub[userID] = append(sseHub[userID], ch)
+	sseMu.Unlock()
+	return ch
+}
+
+func sseUnsubscribe(userID uint, ch chan string) {
+	sseMu.Lock()
+	defer sseMu.Unlock()
+	chans := sseHub[userID]
+	for i, c := range chans {
+		if c == ch {
+			sseHub[userID] = append(chans[:i], chans[i+1:]...)
+			break
+		}
+	}
+	if len(sseHub[userID]) == 0 {
+		delete(sseHub, userID)
+	}
+	close(ch)
+}
+
+// broadcastToUser pushes an SSE event to all open tabs for a given internal userID.
+func broadcastToUser(userID uint, eventType, data string) {
+	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, data)
+	sseMu.RLock()
+	chans := append([]chan string(nil), sseHub[userID]...) // copy slice
+	sseMu.RUnlock()
+	for _, ch := range chans {
+		select {
+		case ch <- msg:
+		default: // drop if buffer full (slow client)
+		}
+	}
+}
 
 // requireJWT validates the Authorization: Bearer <jwt> header.
 // The JWT carries a UUID public ID (never the sequential integer PK);
@@ -47,7 +97,7 @@ func requireJWT() fiber.Handler {
 		if dbErr := database.DB.Model(&models.User{}).Select("id").Where("public_id = ?", claims.UserID).Scan(&row).Error; dbErr != nil || row.ID == 0 {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User not found"})
 		}
-		c.Locals("userID", row.ID)          // uint — used by all internal handlers
+		c.Locals("userID", row.ID)              // uint — used by all internal handlers
 		c.Locals("userPublicID", claims.UserID) // UUID string — used by handlers that need to return user identity
 		c.Locals("userRole", claims.Role)
 		c.Locals("username", claims.Username)
@@ -631,10 +681,10 @@ func main() {
 		}
 
 		return c.JSON(fiber.Map{
-			"photos":     photos,
-			"total":      total,
-			"page":       page,
-			"limit":      limit,
+			"photos":      photos,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
 			"total_pages": int((total + int64(limit) - 1) / int64(limit)),
 		})
 	})
@@ -766,6 +816,10 @@ func main() {
 		photo.AIAnalysis = &input.Analysis // B7 fix: *string so gorm writes NULL for unset fields
 		database.DB.Save(&photo)
 
+		// Notify the photo owner that AI analysis is done
+		payload, _ := json.Marshal(map[string]interface{}{"photo_id": photo.ID})
+		broadcastToUser(photo.UserID, "ai_analysis_done", string(payload))
+
 		return c.JSON(fiber.Map{"message": "AI analysis updated successfully"})
 	})
 
@@ -832,6 +886,11 @@ func main() {
 
 		photo.InferredParams = &input.InferredParams
 		database.DB.Save(&photo)
+
+		// Notify the photo owner that parameter inference is complete
+		payload, _ := json.Marshal(map[string]interface{}{"photo_id": photo.ID})
+		broadcastToUser(photo.UserID, "infer_params_done", string(payload))
+
 		return c.JSON(fiber.Map{"message": "Inferred parameters saved"})
 	})
 
@@ -1182,6 +1241,16 @@ func main() {
 			updates["completed_at"] = &now
 		}
 		database.DB.Model(&job).Updates(updates)
+
+		// Push SSE notification to the job owner
+		if input.Status == "completed" || input.Status == "failed" {
+			payload, _ := json.Marshal(map[string]interface{}{
+				"job_id": job.ID,
+				"photo_id": job.PhotoID,
+				"status": input.Status,
+			})
+			broadcastToUser(job.UserID, "export_"+input.Status, string(payload))
+		}
 
 		return c.JSON(fiber.Map{"message": "Export job status updated"})
 	})
@@ -2135,6 +2204,65 @@ func main() {
 			"top_lenses":       topLenses,
 			"color_spaces":     colorSpaces,
 		})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// v8.5 — Server-Sent Events (real-time notifications)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/events/stream — long-lived SSE stream for the authenticated user.
+	// Token is passed as ?token=<jwt> because the browser EventSource API cannot
+	// set custom Authorization headers.
+	app.Get("/api/events/stream", func(c *fiber.Ctx) error {
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing token"})
+		}
+		claims, err := auth.ValidateAccessToken(tokenStr)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token"})
+		}
+		var row struct{ ID uint }
+		if dbErr := database.DB.Model(&models.User{}).Select("id").Where("public_id = ?", claims.UserID).Scan(&row).Error; dbErr != nil || row.ID == 0 {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User not found"})
+		}
+		uid := row.ID
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+
+		ch := sseSubscribe(uid)
+
+		c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+			defer sseUnsubscribe(uid, ch)
+
+			// Initial handshake
+			fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+			w.Flush()
+
+			heartbeat := time.NewTicker(30 * time.Second)
+			defer heartbeat.Stop()
+
+			for {
+				select {
+				case msg, ok := <-ch:
+					if !ok {
+						return
+					}
+					fmt.Fprint(w, msg)
+					w.Flush()
+				case <-heartbeat.C:
+					// Keep-alive comment (not parsed as an event by browsers)
+					fmt.Fprintf(w, ": heartbeat\n\n")
+					if err := w.Flush(); err != nil {
+						return // client disconnected
+					}
+				}
+			}
+		}))
+		return nil
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

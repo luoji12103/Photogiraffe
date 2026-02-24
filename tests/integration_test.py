@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Photogiraffe Integration Test Suite
-测试范围: v7.3 Albums, v7.4 Profile, v7.5 Enhanced Presets, v8.1 Stats, v8.3 Search
+测试范围: v7.3 Albums, v7.4 Profile, v7.5 Enhanced Presets, v8.1 Stats, v8.3 Search, v8.5 SSE
 运行方式: python3 tests/integration_test.py
 需要: Go Core 运行于 http://127.0.0.1:8080
 """
@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import io
+import socket as _socket_module
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -353,6 +354,60 @@ def test_search(token):
 
 
 # ─────────────────────────────────────────────────────────────────
+# v8.5 SSE — Server-Sent Events
+# ─────────────────────────────────────────────────────────────────
+
+def test_sse(token):
+    section("v8.5 SSE — /api/events/stream")
+
+    # 1. No token → 401
+    d, status, _ = http("GET", "/api/events/stream")
+    check("GET /api/events/stream without token → 401", status == 401, f"status={status}")
+
+    # 2. Bad token → 401
+    d, status, _ = http("GET", "/api/events/stream?token=bad.token.here")
+    check("GET /api/events/stream bad token → 401", status == 401, f"status={status}")
+
+    # 3. Valid token → 200 with text/event-stream + receives 'connected' event
+    # Use raw socket to avoid http.client's chunked-body blocking semantics.
+    try:
+        req_line = (
+            f"GET /api/events/stream?token={urllib.parse.quote(token)} HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:8080\r\n"
+            f"Connection: close\r\n\r\n"
+        )
+        s = _socket_module.socket(_socket_module.AF_INET, _socket_module.SOCK_STREAM)
+        s.settimeout(6)
+        s.connect(("127.0.0.1", 8080))
+        s.sendall(req_line.encode())
+        raw = b""
+        try:
+            while len(raw) < 2048:
+                chunk = s.recv(512)
+                if not chunk:
+                    break
+                raw += chunk
+                if b"connected" in raw:
+                    break
+        except _socket_module.timeout:
+            pass
+        finally:
+            s.close()
+
+        raw_str = raw.decode("utf-8", errors="replace")
+        status_line = raw_str.split("\r\n")[0]
+        status_code = int(status_line.split(" ")[1]) if len(status_line.split(" ")) >= 2 else 0
+        content_type_line = next((l for l in raw_str.split("\r\n") if l.lower().startswith("content-type:")), "")
+        check("GET /api/events/stream with token → 200", status_code == 200, f"status_line={status_line!r}")
+        check("Content-Type is text/event-stream", "text/event-stream" in content_type_line.lower(), f"header={content_type_line!r}")
+        check("SSE 'connected' event received", "connected" in raw_str, f"raw={raw_str[:300]!r}")
+    except Exception as e:
+        check("GET /api/events/stream connection", False, str(e))
+        check("Content-Type is text/event-stream", False, "connection failed")
+        check("SSE 'connected' event received", False, "connection failed")
+
+
+# ─────────────────────────────────────────────────────────────────
 # Security
 # ─────────────────────────────────────────────────────────────────
 
@@ -417,6 +472,7 @@ def main():
     test_presets(token)
     test_stats(token)
     test_search(token)
+    test_sse(token)
     test_security(token)
 
     # Summary

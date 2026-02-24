@@ -10,4 +10,5 @@ piexif
 openai
 google-genai
 anthropic
+opencv-python-headless
 zhipuai

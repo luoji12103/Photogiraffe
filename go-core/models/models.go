@@ -90,7 +90,7 @@ type Preset struct {
 	Description  string
 	AdjustParams string `gorm:"type:jsonb;not null"` // serialized AdjustParams JSON
 	Platforms    string `gorm:"type:jsonb"`          // JSON array, e.g. ["Lightroom","Capture One"]
-	FilePath     string                               // MinIO path for downloadable preset file
+	FilePath     string // MinIO path for downloadable preset file
 }
 
 // RefreshToken keeps a hashed record of an issued refresh token.
@@ -106,7 +106,7 @@ type RefreshToken struct {
 type ShareLink struct {
 	gorm.Model
 	PhotoID   uint       `gorm:"not null;index"`
-	UserID    uint       `gorm:"not null;index"` // creator
+	UserID    uint       `gorm:"not null;index"`       // creator
 	Token     string     `gorm:"not null;uniqueIndex"` // 32-byte hex random token
 	ExpiresAt *time.Time // nil = never expires
 	IsRevoked bool       `gorm:"default:false"`
@@ -125,8 +125,8 @@ type InviteCode struct {
 // Album is a named collection of photos belonging to a user.
 type Album struct {
 	gorm.Model
-	UserID       uint    `gorm:"not null;index"`
-	Name         string  `gorm:"not null"`
+	UserID       uint   `gorm:"not null;index"`
+	Name         string `gorm:"not null"`
 	Description  string
 	CoverPhotoID *uint   // nil = no explicit cover (use first photo)
 	ShareToken   string  `gorm:"uniqueIndex"` // empty = not shared
@@ -135,18 +135,18 @@ type Album struct {
 
 // AlbumPhoto is the join table between Album and Photo.
 type AlbumPhoto struct {
-	AlbumID   uint      `gorm:"primaryKey"`
-	PhotoID   uint      `gorm:"primaryKey"`
-	AddedAt   time.Time `gorm:"autoCreateTime"`
+	AlbumID uint      `gorm:"primaryKey"`
+	PhotoID uint      `gorm:"primaryKey"`
+	AddedAt time.Time `gorm:"autoCreateTime"`
 }
 
 // UserProfile stores extended photographer identity for a user (one-to-one).
 type UserProfile struct {
 	gorm.Model
-	UserID         uint   `gorm:"not null;uniqueIndex"` // FK → users.id
-	Bio            string `gorm:"type:text"`
-	AvatarPath     string // MinIO path, e.g. "profiles/avatars/{uid}/{uuid}.webp"
-	SignaturePath  string // MinIO path, e.g. "profiles/signatures/{uid}/{uuid}.png"
-	Website        string
-	Location       string
+	UserID        uint   `gorm:"not null;uniqueIndex"` // FK → users.id
+	Bio           string `gorm:"type:text"`
+	AvatarPath    string // MinIO path, e.g. "profiles/avatars/{uid}/{uuid}.webp"
+	SignaturePath string // MinIO path, e.g. "profiles/signatures/{uid}/{uuid}.png"
+	Website       string
+	Location      string
 }

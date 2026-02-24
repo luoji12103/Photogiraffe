@@ -8,6 +8,10 @@ import base64
 from io import BytesIO
 from PIL import Image, ImageCms
 import numpy as np
+try:
+    import cv2 as _cv2  # optional: used for AI denoising
+except ImportError:
+    _cv2 = None
 import piexif
 import redis
 from minio import Minio
@@ -568,6 +572,7 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         wm_opacity = float(opts.get("watermark_opacity",  0.6))
         wm_pos     = opts.get("watermark_position", "bottom_right")
         embed_exif = bool(opts.get("embed_exif", True))
+        denoise_level = int(opts.get("denoise_level", 0))  # 0=off, 1=light, 2=medium, 3=strong
 
         # Mark job as processing
         _update_export_status(job_id, "processing")
@@ -600,6 +605,25 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
 
         # 3. Apply colour adjustments (mirrors WebGL pipeline)
         img = _apply_adjust_params(img, opts)
+
+        # 3.5. AI Denoising (optional, CPU-based NLM)
+        # h values: 1=light(5), 2=medium(10), 3=strong(20)
+        if denoise_level > 0 and _cv2 is not None:
+            h_val = {1: 5, 2: 10, 3: 20}.get(denoise_level, 5)
+            logger.info(f"[export:{job_id}] Applying AI denoising level={denoise_level} h={h_val}")
+            img_np = np.array(img)  # RGB uint8
+            img_bgr = _cv2.cvtColor(img_np, _cv2.COLOR_RGB2BGR)
+            denoised_bgr = _cv2.fastNlMeansDenoisingColored(
+                img_bgr,
+                None,
+                h=float(h_val),
+                hColor=float(h_val),
+                templateWindowSize=7,
+                searchWindowSize=21,
+            )
+            img = Image.fromarray(_cv2.cvtColor(denoised_bgr, _cv2.COLOR_BGR2RGB))
+        elif denoise_level > 0:
+            logger.warning(f"[export:{job_id}] opencv not available, skipping denoising")
 
         # 4. Resize
         iw, ih = img.size

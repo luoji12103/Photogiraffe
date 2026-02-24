@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 )
 
 // ─────────────────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ func TestCalcOffset(t *testing.T) {
 		{1, 20, 0},
 		{2, 20, 20},
 		{3, 10, 20},
-		{0, 20, 0},    // page < 1 → clamp to 1
+		{0, 20, 0},   // page < 1 → clamp to 1
 		{1, 0, 0},    // limit < 1 → use default 20; (1-1)*20=0
 		{1, 200, 0},  // limit > 100 → default 20
 		{2, 200, 20}, // limit clamped to 20, page=2 → offset=20
@@ -165,5 +167,90 @@ func TestCryptoRand_NotAllZeros(t *testing.T) {
 	}
 	if allZero {
 		t.Error("crypto/rand produced all-zero bytes (astronomically unlikely unless broken)")
+	}
+}
+// ─────────────────────────────────────────────────────────────────
+// SSE Hub — sseSubscribe / sseUnsubscribe / broadcastToUser
+// ─────────────────────────────────────────────────────────────────
+
+// TestSSEHub_SubscribeAndReceive checks that a subscriber receives a
+// broadcast message within a short deadline.
+func TestSSEHub_SubscribeAndReceive(t *testing.T) {
+	const uid uint = 42
+	ch := sseSubscribe(uid)
+	defer sseUnsubscribe(uid, ch)
+
+	broadcastToUser(uid, "test_event", `{"hello":"world"}`)
+
+	select {
+	case msg := <-ch:
+		if !strings.Contains(msg, "test_event") {
+			t.Errorf("message missing event type: %q", msg)
+		}
+		if !strings.Contains(msg, `{"hello":"world"}`) {
+			t.Errorf("message missing data: %q", msg)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for SSE message")
+	}
+}
+
+// TestSSEHub_MultiTab verifies that multiple subscribers for the same user
+// all receive the broadcast.
+func TestSSEHub_MultiTab(t *testing.T) {
+	const uid uint = 99
+	ch1 := sseSubscribe(uid)
+	ch2 := sseSubscribe(uid)
+	defer func() {
+		sseUnsubscribe(uid, ch1)
+		sseUnsubscribe(uid, ch2)
+	}()
+
+	broadcastToUser(uid, "ping", "{}")
+
+	for i, ch := range []chan string{ch1, ch2} {
+		select {
+		case <-ch:
+		case <-time.After(100 * time.Millisecond):
+			t.Errorf("tab %d: timed out waiting for broadcast", i+1)
+		}
+	}
+}
+
+// TestSSEHub_Unsubscribe verifies that after unsubscribing no channel leak occurs.
+func TestSSEHub_Unsubscribe(t *testing.T) {
+	const uid uint = 77
+	ch := sseSubscribe(uid)
+	sseUnsubscribe(uid, ch) // this closes ch
+
+	sseMu.RLock()
+	_, exists := sseHub[uid]
+	sseMu.RUnlock()
+
+	if exists {
+		t.Error("channel map entry should be removed after last unsubscribe")
+	}
+}
+
+// TestSSEHub_NoBlockOnFullBuffer ensures broadcastToUser does not block when
+// the subscriber's channel buffer is full.
+func TestSSEHub_NoBlockOnFullBuffer(t *testing.T) {
+	const uid uint = 55
+	ch := sseSubscribe(uid)
+	defer sseUnsubscribe(uid, ch)
+
+	done := make(chan struct{})
+	go func() {
+		// Fill buffer beyond capacity — must not block
+		for i := 0; i < 64; i++ {
+			broadcastToUser(uid, "flood", "{}")
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("broadcastToUser blocked on full buffer")
 	}
 }

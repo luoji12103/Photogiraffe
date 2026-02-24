@@ -64,7 +64,7 @@ Phase 8 聚焦**运营视角、AI 图像处理、内容发现与跨平台能力*
 - 无新后端 API
 
 ### v8.5 (SSE Notifications)
-- `GET /api/events/stream` — SSE，需 JWT 验证，持久连接
+- `GET /api/events/stream 验证，持久` — SSE，需 JWT连接
 - 后端：Go Core 内存维护 `userID → chan SSEEvent` 映射，导出/AI/infer 任务回调时广播
 - 事件格式：`data: {"type": "export_done", "job_id": "xxx", "download_url": "..."}\n\n`
 

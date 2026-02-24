@@ -34,6 +34,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
   const [format, setFormat] = useState<ExportFormat>("jpeg");
   const [quality, setQuality] = useState(90);
   const [longEdge, setLongEdge] = useState(0);
+  const [denoiseLevel, setDenoiseLevel] = useState(0);
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -93,6 +94,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
           format,
           quality,
           long_edge: longEdge,
+          denoise_level: denoiseLevel,
           embed_exif: true,
           adjust: {
             exposure:   adjustParams.exposure,
@@ -116,7 +118,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
       setJobStatus("failed");
       setErrorMsg(e instanceof Error ? e.message : String(e));
     }
-  }, [photoId, format, quality, longEdge, adjustParams, pollStatus]);
+}, [photoId, format, quality, longEdge, denoiseLevel, adjustParams, pollStatus]);
 
   const handleReset = () => {
     setJobStatus("idle");
@@ -194,6 +196,36 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* AI Denoise */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-zinc-500">AI Denoising</label>
+              {denoiseLevel > 0 && (
+                <span className="text-xs text-violet-400">
+                  {["", "轻度", "中度", "强力"][denoiseLevel]}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {([0,1,2,3] as const).map((lvl) => (
+                <button
+                  key={lvl}
+                  onClick={() => setDenoiseLevel(lvl)}
+                  className={`py-1 rounded text-xs font-medium transition-colors ${
+                    denoiseLevel === lvl
+                      ? lvl === 0 ? "bg-zinc-600 text-white" : "bg-violet-600 text-white"
+                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  }`}
+                >
+                  {lvl === 0 ? "关闭" : lvl === 1 ? "轻" : lvl === 2 ? "中" : "强"}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-600 leading-tight">
+              使用 AI 算法减少照片噪点，强度越高处理越慢
+            </p>
           </div>
 
           {/* Status / Action */}

@@ -3,7 +3,10 @@
 import { LayoutGroup } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { ToastProvider } from "@/context/ToastContext";
 import AuthGuard from "@/components/AuthGuard";
+import ToastContainer from "@/components/ToastContainer";
+import SSEListener from "@/components/SSEListener";
 import Link from "next/link";
 import { Aperture, LogOut, Settings, Shield, MapPin, Images, UserCircle, Search, LayoutDashboard } from "lucide-react";
 
@@ -76,7 +79,11 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
-      <InnerLayout>{children}</InnerLayout>
+      <ToastProvider>
+        <InnerLayout>{children}</InnerLayout>
+        <ToastContainer />
+        <SSEListener />
+      </ToastProvider>
     </AuthProvider>
   );
 }
