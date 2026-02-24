@@ -169,6 +169,7 @@ func TestCryptoRand_NotAllZeros(t *testing.T) {
 		t.Error("crypto/rand produced all-zero bytes (astronomically unlikely unless broken)")
 	}
 }
+
 // ─────────────────────────────────────────────────────────────────
 // SSE Hub — sseSubscribe / sseUnsubscribe / broadcastToUser
 // ─────────────────────────────────────────────────────────────────

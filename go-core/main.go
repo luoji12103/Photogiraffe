@@ -1245,9 +1245,9 @@ func main() {
 		// Push SSE notification to the job owner
 		if input.Status == "completed" || input.Status == "failed" {
 			payload, _ := json.Marshal(map[string]interface{}{
-				"job_id": job.ID,
+				"job_id":   job.ID,
 				"photo_id": job.PhotoID,
-				"status": input.Status,
+				"status":   input.Status,
 			})
 			broadcastToUser(job.UserID, "export_"+input.Status, string(payload))
 		}
