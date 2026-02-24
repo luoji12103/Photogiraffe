@@ -126,3 +126,14 @@ type AlbumPhoto struct {
 	PhotoID   uint      `gorm:"primaryKey"`
 	AddedAt   time.Time `gorm:"autoCreateTime"`
 }
+
+// UserProfile stores extended photographer identity for a user (one-to-one).
+type UserProfile struct {
+	gorm.Model
+	UserID         uint   `gorm:"not null;uniqueIndex"` // FK → users.id
+	Bio            string `gorm:"type:text"`
+	AvatarPath     string // MinIO path, e.g. "profiles/avatars/{uid}/{uuid}.webp"
+	SignaturePath  string // MinIO path, e.g. "profiles/signatures/{uid}/{uuid}.png"
+	Website        string
+	Location       string
+}

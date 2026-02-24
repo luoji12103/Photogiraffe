@@ -1658,6 +1658,125 @@ func main() {
 		})
 	})
 
+	// ── User Profile ─────────────────────────────────────────────────────────
+
+	// GET /api/profile — return current user's profile (create if not exists)
+	app.Get("/api/profile", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var profile models.UserProfile
+		database.DB.FirstOrCreate(&profile, models.UserProfile{UserID: uid})
+
+		// Generate 1-hour presigned URLs for avatar/signature if they exist
+		avatarURL := ""
+		sigURL := ""
+		if profile.AvatarPath != "" {
+			u, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", profile.AvatarPath, time.Hour, nil)
+			if err == nil {
+				avatarURL = u.String()
+			}
+		}
+		if profile.SignaturePath != "" {
+			u, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", profile.SignaturePath, time.Hour, nil)
+			if err == nil {
+				sigURL = u.String()
+			}
+		}
+		return c.JSON(fiber.Map{
+			"id":             profile.ID,
+			"user_id":        profile.UserID,
+			"bio":            profile.Bio,
+			"avatar_path":    profile.AvatarPath,
+			"signature_path": profile.SignaturePath,
+			"website":        profile.Website,
+			"location":       profile.Location,
+			"avatar_url":     avatarURL,
+			"signature_url":  sigURL,
+			"updated_at":     profile.UpdatedAt,
+		})
+	})
+
+	// PUT /api/profile — update bio/website/location
+	app.Put("/api/profile", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var profile models.UserProfile
+		database.DB.FirstOrCreate(&profile, models.UserProfile{UserID: uid})
+
+		var body struct {
+			Bio      *string `json:"bio"`
+			Website  *string `json:"website"`
+			Location *string `json:"location"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Bio != nil {
+			profile.Bio = *body.Bio
+		}
+		if body.Website != nil {
+			profile.Website = *body.Website
+		}
+		if body.Location != nil {
+			profile.Location = *body.Location
+		}
+		database.DB.Save(&profile)
+		return c.JSON(fiber.Map{"message": "profile updated"})
+	})
+
+	// POST /api/profile/avatar — upload avatar image
+	app.Post("/api/profile/avatar", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		file, err := c.FormFile("avatar")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "avatar file required"})
+		}
+		ext := filepath.Ext(file.Filename)
+		if ext == "" {
+			ext = ".jpg"
+		}
+		objectName := fmt.Sprintf("profiles/avatars/%d/%s%s", uid, uuid.New().String(), ext)
+		src, err := file.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to open file"})
+		}
+		defer src.Close()
+		_, err = storage.MinioClient.PutObject(c.Context(), "photos", objectName, src, file.Size, minio.PutObjectOptions{ContentType: file.Header.Get("Content-Type")})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "upload failed"})
+		}
+		var profile models.UserProfile
+		database.DB.FirstOrCreate(&profile, models.UserProfile{UserID: uid})
+		profile.AvatarPath = objectName
+		database.DB.Save(&profile)
+		// Return presigned URL
+		presigned, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", objectName, time.Hour, nil)
+		return c.JSON(fiber.Map{"avatar_path": objectName, "avatar_url": presigned.String()})
+	})
+
+	// POST /api/profile/signature — upload signature PNG (preserves transparency)
+	app.Post("/api/profile/signature", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		file, err := c.FormFile("signature")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "signature file required"})
+		}
+		objectName := fmt.Sprintf("profiles/signatures/%d/%s.png", uid, uuid.New().String())
+		src, err := file.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to open file"})
+		}
+		defer src.Close()
+		_, err = storage.MinioClient.PutObject(c.Context(), "photos", objectName, src, file.Size, minio.PutObjectOptions{ContentType: "image/png"})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "upload failed"})
+		}
+		var profile models.UserProfile
+		database.DB.FirstOrCreate(&profile, models.UserProfile{UserID: uid})
+		profile.SignaturePath = objectName
+		database.DB.Save(&profile)
+		presigned, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", objectName, time.Hour, nil)
+		return c.JSON(fiber.Map{"signature_path": objectName, "signature_url": presigned.String()})
+	})
+
 	fmt.Println("Starting Go Core API on :8080...")
 	if err := app.Listen(":8080"); err != nil {
 		log.Fatal(err)

@@ -32,7 +32,7 @@ func Connect() {
 	fmt.Println("Successfully connected to PostgreSQL database!")
 
 	// Auto Migrate
-	err = db.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{}, &models.ExportJob{}, &models.Preset{}, &models.RefreshToken{}, &models.ShareLink{}, &models.InviteCode{}, &models.Album{}, &models.AlbumPhoto{})
+	err = db.AutoMigrate(&models.User{}, &models.Photo{}, &models.ExifData{}, &models.FeatureFlag{}, &models.AIConfig{}, &models.ExportJob{}, &models.Preset{}, &models.RefreshToken{}, &models.ShareLink{}, &models.InviteCode{}, &models.Album{}, &models.AlbumPhoto{}, &models.UserProfile{})
 	if err != nil {
 		log.Fatal("Failed to auto migrate database: ", err)
 	}
