@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -926,6 +928,7 @@ func main() {
 	// POST /api/presets/:id/apply/:photo_id — persist preset application to photo
 	app.Post("/api/presets/:id/apply/:photo_id", requireJWT(), func(c *fiber.Ctx) error {
 		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
 		presetID, err := c.ParamsInt("id")
 		photoID, err2 := c.ParamsInt("photo_id")
 		if err != nil || err2 != nil {
@@ -936,7 +939,11 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "preset not found"})
 		}
 		var photo models.Photo
-		if result := database.DB.Where("id = ? AND user_id = ?", photoID, uid).First(&photo); result.Error != nil {
+		q := database.DB.Where("id = ?", photoID)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		if result := q.First(&photo); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
 		}
 		pid := uint(presetID)
@@ -1553,11 +1560,16 @@ func main() {
 		if strings.TrimSpace(body.Name) == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name is required"})
 		}
+		initToken, err := generateShareToken()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate share token"})
+		}
 		album := models.Album{
 			UserID:       uid,
 			Name:         strings.TrimSpace(body.Name),
 			Description:  body.Description,
 			CoverPhotoID: body.CoverPhotoID,
+			ShareToken:   initToken,
 		}
 		if err := database.DB.Create(&album).Error; err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create album"})
@@ -1907,6 +1919,207 @@ func main() {
 		database.DB.Save(&profile)
 		presigned, _ := storage.MinioClient.PresignedGetObject(c.Context(), "photos", objectName, time.Hour, nil)
 		return c.JSON(fiber.Map{"signature_path": objectName, "signature_url": presigned.String()})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// v8.3 — Advanced Search: GET /api/photos/search
+	// ─────────────────────────────────────────────────────────────────
+	app.Get("/api/photos/search", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		q := strings.TrimSpace(c.Query("q", ""))
+		camera := strings.TrimSpace(c.Query("camera", ""))
+		lens := strings.TrimSpace(c.Query("lens", ""))
+		isoMin := strings.TrimSpace(c.Query("iso_min", ""))
+		isoMax := strings.TrimSpace(c.Query("iso_max", ""))
+		dateFrom := strings.TrimSpace(c.Query("date_from", ""))
+		dateTo := strings.TrimSpace(c.Query("date_to", ""))
+		latStr := strings.TrimSpace(c.Query("lat", ""))
+		lngStr := strings.TrimSpace(c.Query("lng", ""))
+		radiusKmStr := strings.TrimSpace(c.Query("radius_km", ""))
+		colorSpace := strings.TrimSpace(c.Query("color_space", ""))
+
+		query := database.DB.Model(&models.Photo{}).
+			Joins("LEFT JOIN exif_data ON exif_data.photo_id = photos.id AND exif_data.deleted_at IS NULL")
+		if role != "SuperAdmin" {
+			query = query.Where("photos.user_id = ?", uid)
+		}
+		query = query.Where("photos.status = ?", "completed")
+
+		if q != "" {
+			like := "%" + q + "%"
+			query = query.Where("photos.original_filename ILIKE ? OR exif_data.camera_model ILIKE ? OR exif_data.lens_model ILIKE ?", like, like, like)
+		}
+		if camera != "" {
+			query = query.Where("exif_data.camera_model ILIKE ?", "%"+camera+"%")
+		}
+		if lens != "" {
+			query = query.Where("exif_data.lens_model ILIKE ?", "%"+lens+"%")
+		}
+		if colorSpace != "" {
+			query = query.Where("exif_data.color_space ILIKE ?", "%"+colorSpace+"%")
+		}
+		// ISO stored as string like "1600" — extract numeric part
+		if isoMin != "" {
+			query = query.Where("NULLIF(regexp_replace(exif_data.iso, '[^0-9]', '', 'g'), '')::BIGINT >= ?", isoMin)
+		}
+		if isoMax != "" {
+			query = query.Where("NULLIF(regexp_replace(exif_data.iso, '[^0-9]', '', 'g'), '')::BIGINT <= ?", isoMax)
+		}
+		if dateFrom != "" {
+			query = query.Where("photos.uploaded_at >= ?", dateFrom)
+		}
+		if dateTo != "" {
+			query = query.Where("photos.uploaded_at <= ?", dateTo+" 23:59:59")
+		}
+		// GPS bounding box approximation
+		if latStr != "" && lngStr != "" && radiusKmStr != "" {
+			lat, errLat := strconv.ParseFloat(latStr, 64)
+			lng, errLng := strconv.ParseFloat(lngStr, 64)
+			radiusKm, errR := strconv.ParseFloat(radiusKmStr, 64)
+			if errLat == nil && errLng == nil && errR == nil && radiusKm > 0 {
+				latDelta := radiusKm / 111.0
+				lngDelta := radiusKm / (111.0 * math.Cos(lat*math.Pi/180.0))
+				query = query.Where(
+					"NULLIF(exif_data.gps_latitude,'')::FLOAT BETWEEN ? AND ? AND NULLIF(exif_data.gps_longitude,'')::FLOAT BETWEEN ? AND ?",
+					lat-latDelta, lat+latDelta, lng-lngDelta, lng+lngDelta,
+				)
+			}
+		}
+
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "count failed"})
+		}
+		var photos []models.Photo
+		if err := query.Select("photos.*").Preload("ExifData").
+			Order("photos.uploaded_at DESC").Limit(limit).Offset(offset).Find(&photos).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "query failed"})
+		}
+		return c.JSON(fiber.Map{
+			"photos":      photos,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": int((total + int64(limit) - 1) / int64(limit)),
+		})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// v8.1 — Dashboard statistics: GET /api/stats
+	// ─────────────────────────────────────────────────────────────────
+	app.Get("/api/stats", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		uidCond := "user_id = ?"
+		uidArgs := []interface{}{uid}
+		if role == "SuperAdmin" {
+			uidCond = "1=1"
+			uidArgs = nil
+		}
+
+		// Total photos (all statuses)
+		var totalPhotos int64
+		database.DB.Model(&models.Photo{}).Where(uidCond, uidArgs...).Count(&totalPhotos)
+
+		// Completed photos
+		var completedPhotos int64
+		database.DB.Model(&models.Photo{}).Where(uidCond+" AND status = 'completed'", uidArgs...).Count(&completedPhotos)
+
+		// AI analysed (AIAnalysis is not null)
+		var aiAnalyzed int64
+		database.DB.Model(&models.Photo{}).Where(uidCond+" AND ai_analysis IS NOT NULL", uidArgs...).Count(&aiAnalyzed)
+
+		// Albums
+		var totalAlbums int64
+		database.DB.Model(&models.Album{}).Where(uidCond, uidArgs...).Count(&totalAlbums)
+
+		// Presets
+		var totalPresets int64
+		database.DB.Model(&models.Preset{}).Where(uidCond, uidArgs...).Count(&totalPresets)
+
+		// Recent uploads by day (last 14 days)
+		type DayCount struct {
+			Date  string `json:"date"`
+			Count int64  `json:"count"`
+		}
+		var recentUploads []DayCount
+		recentSQL := `SELECT TO_CHAR(uploaded_at, 'YYYY-MM-DD') as date, COUNT(*) as count
+			FROM photos WHERE deleted_at IS NULL AND ` + uidCond + `
+			AND uploaded_at >= NOW() - INTERVAL '14 days'
+			GROUP BY date ORDER BY date`
+		if uidArgs == nil {
+			database.DB.Raw(recentSQL).Scan(&recentUploads)
+		} else {
+			database.DB.Raw(recentSQL, uidArgs...).Scan(&recentUploads)
+		}
+
+		// Top cameras (from exif_data)
+		type NameCount struct {
+			Name  string `json:"name"`
+			Count int64  `json:"count"`
+		}
+		var topCameras []NameCount
+		camSQL := `SELECT exif_data.camera_model as name, COUNT(*) as count
+			FROM exif_data
+			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
+			WHERE exif_data.deleted_at IS NULL AND exif_data.camera_model != '' AND ` + uidCond + `
+			GROUP BY exif_data.camera_model ORDER BY count DESC LIMIT 8`
+		if uidArgs == nil {
+			database.DB.Raw(camSQL).Scan(&topCameras)
+		} else {
+			database.DB.Raw(camSQL, uidArgs...).Scan(&topCameras)
+		}
+
+		// Top lenses
+		var topLenses []NameCount
+		lensSQL := `SELECT exif_data.lens_model as name, COUNT(*) as count
+			FROM exif_data
+			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
+			WHERE exif_data.deleted_at IS NULL AND exif_data.lens_model != '' AND ` + uidCond + `
+			GROUP BY exif_data.lens_model ORDER BY count DESC LIMIT 8`
+		if uidArgs == nil {
+			database.DB.Raw(lensSQL).Scan(&topLenses)
+		} else {
+			database.DB.Raw(lensSQL, uidArgs...).Scan(&topLenses)
+		}
+
+		// Color space distribution
+		var colorSpaces []NameCount
+		csSQL := `SELECT exif_data.color_space as name, COUNT(*) as count
+			FROM exif_data
+			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
+			WHERE exif_data.deleted_at IS NULL AND exif_data.color_space != '' AND ` + uidCond + `
+			GROUP BY exif_data.color_space ORDER BY count DESC`
+		if uidArgs == nil {
+			database.DB.Raw(csSQL).Scan(&colorSpaces)
+		} else {
+			database.DB.Raw(csSQL, uidArgs...).Scan(&colorSpaces)
+		}
+
+		return c.JSON(fiber.Map{
+			"total_photos":     totalPhotos,
+			"completed_photos": completedPhotos,
+			"ai_analyzed":      aiAnalyzed,
+			"albums":           totalAlbums,
+			"presets":          totalPresets,
+			"recent_uploads":   recentUploads,
+			"top_cameras":      topCameras,
+			"top_lenses":       topLenses,
+			"color_spaces":     colorSpaces,
+		})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")
