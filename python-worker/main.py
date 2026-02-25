@@ -7,7 +7,7 @@ import zipfile
 import requests
 import base64
 from io import BytesIO
-from PIL import Image, ImageCms
+from PIL import Image, ImageCms, ImageDraw, ImageFont
 import numpy as np
 import piexif
 import redis
@@ -593,6 +593,394 @@ def _crop_print_spec(img: "Image.Image", spec: str) -> "Image.Image":
     return img
 
 
+# ─── Phase 15 — Minimalist Frame Rendering Engine ────────────────────────────
+
+# Canvas aspect-ratio targets (width:height float)
+_CANVAS_RATIOS: dict[str, float] = {
+    "original": 0.0,   # 0 = keep natural canvas from photo + margins
+    "16:9":     16/9,
+    "4:3":      4/3,
+    "3:2":      3/2,
+    "1:1":      1/1,
+    "16:10":    16/10,
+    "4:5":      4/5,
+    "3:4":      3/4,
+    "21:9":     21/9,
+}
+
+# Theme: bg_color, text_primary, text_secondary, divider_color, accent_color
+_FRAME_THEMES: dict[str, dict] = {
+    "white": {
+        "bg":        (255, 255, 255),
+        "primary":   (30,  30,  30),
+        "secondary": (100, 100, 100),
+        "divider":   (200, 200, 200),
+        "accent":    (60,  60,  60),
+    },
+    "dark": {
+        "bg":        (18,  18,  18),
+        "primary":   (230, 230, 230),
+        "secondary": (150, 150, 150),
+        "divider":   (55,  55,  55),
+        "accent":    (180, 180, 180),
+    },
+    "film": {
+        "bg":        (245, 240, 230),   # aged ivory
+        "primary":   (40,  30,  20),
+        "secondary": (100, 86,  70),
+        "divider":   (180, 160, 130),
+        "accent":    (80,  60,  40),
+    },
+}
+
+# Font search paths (Linux-first, then fallbacks)
+_FONT_SEARCH_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+]
+_FONT_BOLD_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+]
+
+
+def _try_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    """Load a TrueType font at `size`; fall back to PIL default."""
+    paths = _FONT_BOLD_PATHS if bold else _FONT_SEARCH_PATHS
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def _text_bbox(draw: ImageDraw.ImageDraw, text: str,
+               font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+    """Return (width, height) of text bounding-box."""
+    bb = draw.textbbox((0, 0), text, font=font)
+    return bb[2] - bb[0], bb[3] - bb[1]
+
+
+def _fit_text(text: str, font: ImageFont.FreeTypeFont,
+              max_w: int, draw: ImageDraw.ImageDraw) -> str:
+    """Truncate text with ellipsis to fit within max_w pixels."""
+    if not text:
+        return ""
+    w, _ = _text_bbox(draw, text, font)
+    if w <= max_w:
+        return text
+    while text:
+        text = text[:-1]
+        w, _ = _text_bbox(draw, text + "…", font)
+        if w <= max_w:
+            return text + "…"
+    return "…"
+
+
+def _wrap_text(text: str, font: ImageFont.FreeTypeFont,
+               max_w: int, draw: ImageDraw.ImageDraw,
+               max_lines: int = 3) -> list[str]:
+    """Break text into wrapped lines (word-wrap + hard-wrap fallback)."""
+    if not text:
+        return []
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        test = (cur + " " + word).strip()
+        w, _ = _text_bbox(draw, test, font)
+        if w <= max_w:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+                if len(lines) >= max_lines:
+                    break
+            # word alone might still be too wide: hard-break
+            while word:
+                test = word
+                w, _ = _text_bbox(draw, test, font)
+                if w <= max_w:
+                    cur = test
+                    break
+                word = word[:-1]
+            else:
+                cur = ""
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    return lines[:max_lines]
+
+
+def _fetch_photo_meta(photo_id) -> dict:
+    """Fetch full photo metadata from Go Core internal endpoint."""
+    try:
+        r = requests.get(
+            f"{GO_CORE_URL}/internal/photos/{photo_id}/meta",
+            headers={"X-Internal-Secret": INTERNAL_SECRET},
+            timeout=8,
+        )
+        if r.ok:
+            return r.json()
+    except Exception as ex:
+        logger.debug(f"[frame] meta fetch failed: {ex}")
+    return {}
+
+
+def _render_frame(
+    img: Image.Image,
+    meta: dict,
+    opts: dict,
+) -> Image.Image:
+    """
+    Phase 15: Render a minimalist frame around `img`.
+
+    Steps:
+      1. Select theme (white / dark / film)
+      2. Collect text content rows
+      3. Compute font sizes proportional to the image's short edge
+      4. Measure total info-bar height
+      5. Build natural canvas (photo + outer margins + info bar)
+      6. Expand canvas to match target ratio if requested
+      7. Paste photo, draw divider, render text rows
+    """
+    theme_name   = opts.get("frame_style", "white")
+    target_ratio_key = opts.get("frame_ratio", "original")
+    show_exif    = bool(opts.get("frame_show_exif", True))
+    show_desc    = bool(opts.get("frame_show_desc", True))
+    show_ai      = bool(opts.get("frame_show_ai",   False))
+    theme = _FRAME_THEMES.get(theme_name, _FRAME_THEMES["white"])
+
+    photo_w, photo_h = img.size
+    short_edge = min(photo_w, photo_h)
+
+    # ── Font sizes (2.2 / 1.75 / 1.4 % of short edge, minimum 14/12/11 px) ──
+    sz_primary   = max(14, int(short_edge * 0.022))
+    sz_secondary = max(12, int(short_edge * 0.0175))
+    sz_caption   = max(11, int(short_edge * 0.014))
+
+    # ── Outer margin = 4.5% of short edge, minimum 24 px ──
+    margin = max(24, int(short_edge * 0.045))
+
+    # ── Temporary draw surface for text measurement ──
+    probe = Image.new("RGB", (photo_w * 4, photo_h * 2), theme["bg"])
+    draw_probe = ImageDraw.Draw(probe)
+    font_bold    = _try_font(sz_primary,   bold=True)
+    font_regular = _try_font(sz_secondary, bold=False)
+    font_small   = _try_font(sz_caption,   bold=False)
+    line_gap_primary   = max(6, int(sz_primary   * 0.45))
+    line_gap_secondary = max(4, int(sz_secondary * 0.4))
+    line_gap_caption   = max(3, int(sz_caption   * 0.4))
+
+    # ── Info area available width = photo_w – if landscape, else side column ──
+    # Determine layout: portrait photo in wider canvas → side-by-side; else bottom bar
+    photo_ratio = photo_w / photo_h
+    target_ratio_val = _CANVAS_RATIOS.get(target_ratio_key, 0.0)
+    # Side layout when: photo is portrait AND target canvas is landscape
+    use_side_layout = (photo_ratio < 0.85) and (
+        target_ratio_val >= 1.2 or target_ratio_key in ("16:9", "4:3", "3:2", "16:10", "21:9")
+    )
+
+    if use_side_layout:
+        # side column width = 30–35% of target canvas width
+        # We'll compute final canvas size first, then use column width
+        if target_ratio_val > 0:
+            canvas_w = int((photo_h + 2 * margin) * target_ratio_val)
+        else:
+            canvas_w = photo_w + margin * 4  # no target: add generous side space
+        canvas_h = photo_h + 2 * margin
+        side_col_w = canvas_w - photo_w - margin * 3
+        info_max_w = max(100, side_col_w - margin)
+    else:
+        info_max_w = photo_w - 2  # preserve small inner padding
+        side_col_w = 0
+
+    # ── Collect text content lines ──
+    camera = meta.get("camera_model", "").strip()
+    lens   = meta.get("lens_model",   "").strip()
+    ap     = meta.get("aperture",     "").strip()
+    ss     = meta.get("shutter_speed","").strip()
+    iso    = meta.get("iso",          "").strip()
+    fl     = meta.get("focal_length", "").strip()
+    dt_raw = meta.get("date_time_original", "").strip()
+    desc   = meta.get("description",  "").strip()
+    ai_raw = meta.get("ai_analysis",  "").strip()
+    copyright_ = meta.get("copyright","").strip()
+    creator    = meta.get("creator",  "").strip()
+
+    # Format date
+    date_str = ""
+    if dt_raw:
+        try:
+            date_str = dt_raw[:10].replace(":", "/")
+        except Exception:
+            date_str = dt_raw[:10]
+
+    # Build primary identifier (camera · lens)
+    primary_parts = [p for p in [camera, lens] if p]
+
+    # Build EXIF param tokens
+    exif_tokens = []
+    if show_exif:
+        if ap:  exif_tokens.append(f"f/{ap}" if not ap.startswith("f") else ap)
+        if ss:  exif_tokens.append(ss if "/" in ss or "s" in ss.lower() else f"{ss}s")
+        if iso: exif_tokens.append(f"ISO {iso}" if not iso.upper().startswith("ISO") else iso)
+        if fl:  exif_tokens.append(fl if "mm" in fl.lower() else f"{fl}mm")
+    exif_line = "  ·  ".join(exif_tokens)
+
+    # AI first sentence
+    ai_line = ""
+    if show_ai and ai_raw:
+        # Strip JSON wrapper if present
+        clean = re.sub(r'^\s*\{.*?"summary"\s*:\s*"', '', ai_raw)
+        clean = re.sub(r'"\s*\}.*$', '', clean, flags=re.DOTALL)
+        sent = re.split(r'[。.\n]', clean.strip())[0].strip()
+        ai_line = sent[:120]
+
+    # Copyright row (right-aligned)
+    cr_parts = [p for p in [copyright_, creator] if p]
+    copyright_line = "© " + "  ·  ".join(cr_parts) if cr_parts else ""
+
+    # ── Measure and build rows for bottom or side layout ──
+    def build_info_rows(avail_w: int):
+        rows = []  # list of (text, font, color, indent)
+        # Primary: camera / lens bold
+        if primary_parts:
+            for part in primary_parts:
+                t = _fit_text(part, font_bold, avail_w, draw_probe)
+                rows.append((t, font_bold, theme["primary"], 0))
+        # EXIF param line
+        if exif_line:
+            t = _fit_text(exif_line, font_regular, avail_w, draw_probe)
+            rows.append((t, font_regular, theme["secondary"], 0))
+        # Date
+        if date_str:
+            rows.append((date_str, font_small, theme["secondary"], 0))
+        # Description (wrapped)
+        if show_desc and desc:
+            wrapped = _wrap_text(desc, font_small, avail_w, draw_probe, max_lines=3)
+            for line in wrapped:
+                rows.append((line, font_small, theme["accent"], 0))
+        # AI line
+        if ai_line:
+            t = _fit_text(f"AI  {ai_line}", font_small, avail_w, draw_probe)
+            rows.append((t, font_small, theme["secondary"], 0))
+        return rows
+
+    info_rows = build_info_rows(info_max_w)
+
+    # ── Compute info bar height ──
+    def rows_height(rows) -> int:
+        h = 0
+        for _, font, _, _ in rows:
+            _, fh = _text_bbox(draw_probe, "Ag", font)
+            if font is font_bold:
+                h += fh + line_gap_primary
+            elif font is font_regular:
+                h += fh + line_gap_secondary
+            else:
+                h += fh + line_gap_caption
+        return h
+
+    info_h = rows_height(info_rows)
+    if copyright_line:
+        _, cr_fh = _text_bbox(draw_probe, copyright_line, font_small)
+        info_h += cr_fh + line_gap_caption * 2
+    divider_thick = max(1, int(short_edge * 0.002))
+    divider_gap   = max(6, int(short_edge * 0.012))
+
+    # ── Build natural canvas size ──
+    if use_side_layout:
+        nat_w = canvas_w
+        nat_h = canvas_h
+    else:
+        nat_w = photo_w + 2 * margin
+        bar_h = divider_gap + divider_thick + divider_gap + info_h + margin
+        nat_h = photo_h + margin + bar_h + margin
+
+    # ── Expand to target ratio ──
+    target_r = _CANVAS_RATIOS.get(target_ratio_key, 0.0)
+    if target_r > 0:
+        nat_ratio = nat_w / nat_h
+        if nat_ratio < target_r:
+            # expand width
+            new_w = int(nat_h * target_r)
+            extra_w = new_w - nat_w
+            nat_w = new_w
+        else:
+            # expand height — push bottom (more info space)
+            new_h = int(nat_w / target_r)
+            nat_h = new_h
+
+    canvas = Image.new("RGB", (nat_w, nat_h), theme["bg"])
+    draw = ImageDraw.Draw(canvas)
+
+    # ── Place photo ──
+    if use_side_layout:
+        photo_x = margin
+        photo_y = margin
+    else:
+        photo_x = (nat_w - photo_w) // 2
+        photo_y = margin
+    canvas.paste(img, (photo_x, photo_y))
+
+    # ── Draw divider ──
+    if use_side_layout:
+        # vertical divider between photo and side column
+        div_x = photo_x + photo_w + divider_gap
+        draw.rectangle(
+            [div_x, margin, div_x + divider_thick, photo_y + photo_h],
+            fill=theme["divider"]
+        )
+        text_x = div_x + divider_thick + divider_gap
+        text_y = margin
+    else:
+        # horizontal divider below photo
+        div_y = photo_y + photo_h + divider_gap
+        draw.rectangle(
+            [margin, div_y, margin + photo_w, div_y + divider_thick],
+            fill=theme["divider"]
+        )
+        text_x = margin
+        text_y = div_y + divider_thick + divider_gap
+
+    # ── Draw info rows ──
+    avail_text_w = (nat_w - text_x - margin) if use_side_layout else info_max_w
+    rebuilt_rows = build_info_rows(avail_text_w)   # re-fit with final width
+
+    cy = text_y
+    for text, font, color, _ in rebuilt_rows:
+        if not text:
+            continue
+        draw.text((text_x, cy), text, font=font, fill=color)
+        _, fh = _text_bbox(draw, "Ag", font)
+        if font is font_bold:
+            cy += fh + line_gap_primary
+        elif font is font_regular:
+            cy += fh + line_gap_secondary
+        else:
+            cy += fh + line_gap_caption
+
+    # ── Copyright (bottom-right) ──
+    if copyright_line:
+        _, cr_fh = _text_bbox(draw, copyright_line, font_small)
+        cr_x = nat_w - margin - _text_bbox(draw, copyright_line, font_small)[0]
+        cr_y = nat_h - margin - cr_fh
+        draw.text((cr_x, cr_y), copyright_line, font=font_small, fill=theme["secondary"])
+
+    del draw_probe
+    return canvas
+
+
+# ─── Phase 14 album export ────────────────────────────────────────────────────
+
 def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str) -> bool:
     """Phase 14: export all photos in an album as ZIP or PDF."""
     opts: dict = {}
@@ -832,6 +1220,16 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         # 5. Watermark
         if wm_path:
             img = _apply_watermark(img, minio_client, wm_path, wm_opacity, wm_pos)
+
+        # 5b. Phase 15 — Minimalist frame rendering
+        frame_style = opts.get("frame_style", "")
+        if frame_style and frame_style not in ("none", "off", ""):
+            try:
+                frame_meta = _fetch_photo_meta(photo_id)
+                img = _render_frame(img, frame_meta, opts)
+                logger.info(f"[export:{job_id}] frame rendered: style={frame_style} ratio={opts.get('frame_ratio','original')}")
+            except Exception as fe:
+                logger.warning(f"[export:{job_id}] frame render failed (skipped): {fe}")
 
         # 6. Prepare output bytes
         out_buf = BytesIO()

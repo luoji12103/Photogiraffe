@@ -1594,6 +1594,33 @@ func main() {
 		})
 	})
 
+	// GET /internal/photos/:id/meta — worker fetches full metadata for frame rendering (Phase 15)
+	app.Get("/internal/photos/:id/meta", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var photo models.Photo
+		if result := database.DB.Preload("ExifData").Where("id = ?", id).First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		aiAnalysis := ""
+		if photo.AIAnalysis != nil {
+			aiAnalysis = *photo.AIAnalysis
+		}
+		return c.JSON(fiber.Map{
+			"photo_id":           photo.ID,
+			"description":        photo.Description,
+			"ai_analysis":        aiAnalysis,
+			"copyright":          photo.ExifData.Copyright,
+			"creator":            photo.ExifData.Creator,
+			"camera_model":       photo.ExifData.CameraModel,
+			"lens_model":         photo.ExifData.LensModel,
+			"focal_length":       photo.ExifData.FocalLength,
+			"aperture":           photo.ExifData.Aperture,
+			"shutter_speed":      photo.ExifData.ShutterSpeed,
+			"iso":                photo.ExifData.ISO,
+			"date_time_original": photo.ExifData.DateTimeOriginal,
+		})
+	})
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 6 — Share Links (public, unauthenticated access)
 	// ─────────────────────────────────────────────────────────────────────────
@@ -2155,9 +2182,9 @@ func main() {
 		}
 
 		var body struct {
-			Format     string `json:"format"`      // zip | pdf
-			Quality    int    `json:"quality"`     // 1–100
-			PrintSpec  string `json:"print_spec"`  // none | 4x6 | 5x7 | a4 | square
+			Format    string `json:"format"`     // zip | pdf
+			Quality   int    `json:"quality"`    // 1–100
+			PrintSpec string `json:"print_spec"` // none | 4x6 | 5x7 | a4 | square
 		}
 		if err := c.BodyParser(&body); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
@@ -2200,10 +2227,10 @@ func main() {
 		}
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-			"message":  "Album export job created",
-			"job_id":   job.ID,
-			"format":   body.Format,
-			"photos":   len(album.Photos),
+			"message": "Album export job created",
+			"job_id":  job.ID,
+			"format":  body.Format,
+			"photos":  len(album.Photos),
 		})
 	})
 

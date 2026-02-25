@@ -80,8 +80,8 @@ type AIConfig struct {
 type ExportJob struct {
 	gorm.Model
 	PhotoID       uint       `gorm:"not null;index"`
-	AlbumID       *uint      `gorm:"index"`             // non-nil for album export jobs
-	JobType       string     `gorm:"default:'photo'"`   // photo | album
+	AlbumID       *uint      `gorm:"index"`           // non-nil for album export jobs
+	JobType       string     `gorm:"default:'photo'"` // photo | album
 	UserID        uint       `gorm:"not null;index"`
 	Status        string     `gorm:"default:'pending'"` // pending | processing | completed | failed
 	ExportOptions string     `gorm:"type:jsonb"`        // serialized ExportOptions JSON

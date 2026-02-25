@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { Download, Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Stamp } from "lucide-react";
+import { Download, Loader2, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Stamp, Frame } from "lucide-react";
 import type { AdjustParams } from "../lib/gl-renderer";
 import { useAuth } from "@/context/AuthContext";
 
@@ -14,6 +14,8 @@ type ExportFormat = "jpeg" | "png" | "webp" | "tiff";
 type PrintSpec = "none" | "4x6" | "5x7" | "a4" | "square";
 type JobStatus = "idle" | "pending" | "processing" | "completed" | "failed";
 type OverlayPosition = "bottom_right" | "bottom_left" | "top_right" | "top_left" | "bottom_center";
+type FrameStyle = "none" | "white" | "dark" | "film";
+type FrameRatio = "original" | "16:9" | "4:3" | "3:2" | "1:1" | "16:10" | "4:5" | "3:4" | "21:9";
 
 const FORMAT_LABELS: Record<ExportFormat, string> = {
   jpeg: "JPEG",
@@ -21,6 +23,25 @@ const FORMAT_LABELS: Record<ExportFormat, string> = {
   webp: "WebP",
   tiff: "TIFF",
 };
+
+const FRAME_STYLE_OPTIONS: { label: string; value: FrameStyle }[] = [
+  { label: "关闭",    value: "none"  },
+  { label: "简约白", value: "white" },
+  { label: "简约黑", value: "dark"  },
+  { label: "胶片",  value: "film"  },
+];
+
+const FRAME_RATIO_OPTIONS: { label: string; value: FrameRatio }[] = [
+  { label: "原始",  value: "original" },
+  { label: "16:9",  value: "16:9"     },
+  { label: "4:3",   value: "4:3"      },
+  { label: "3:2",   value: "3:2"      },
+  { label: "1:1",   value: "1:1"      },
+  { label: "16:10", value: "16:10"    },
+  { label: "4:5",   value: "4:5"      },
+  { label: "3:4",   value: "3:4"      },
+  { label: "21:9",  value: "21:9"     },
+];
 
 const LONG_EDGE_OPTIONS = [
   { label: "Original", value: 0 },
@@ -54,6 +75,15 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
   const [longEdge, setLongEdge] = useState(0);
   const [denoiseLevel, setDenoiseLevel] = useState(0);
   const [printSpec, setPrintSpec] = useState<PrintSpec>("none");
+
+  // v15 — Frame state
+  const [frameExpanded, setFrameExpanded] = useState(false);
+  const [frameStyle, setFrameStyle] = useState<FrameStyle>("none");
+  const [frameRatio, setFrameRatio] = useState<FrameRatio>("original");
+  const [frameShowExif, setFrameShowExif] = useState(true);
+  const [frameShowDesc, setFrameShowDesc] = useState(true);
+  const [frameShowAi,  setFrameShowAi]  = useState(false);
+
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -136,6 +166,12 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
           denoise_level: denoiseLevel,
           print_spec: printSpec === "none" ? "" : printSpec,
           embed_exif: true,
+          // v15 frame
+          frame_style:      frameStyle === "none" ? "" : frameStyle,
+          frame_ratio:      frameRatio,
+          frame_show_exif:  frameShowExif,
+          frame_show_desc:  frameShowDesc,
+          frame_show_ai:    frameShowAi,
           // v9.1 overlays
           overlay_signature:   overlaySignature,
           overlay_avatar:      overlayAvatar,
@@ -166,6 +202,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
       setErrorMsg(e instanceof Error ? e.message : String(e));
     }
 }, [photoId, format, quality, longEdge, denoiseLevel, printSpec,
+     frameStyle, frameRatio, frameShowExif, frameShowDesc, frameShowAi,
      overlaySignature, overlayAvatar, overlayExif, overlayDescription,
      overlayPosition, overlayOpacity, adjustParams, pollStatus]);
 
@@ -267,6 +304,96 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
             </div>
             {printSpec !== "none" && (
               <p className="text-[10px] text-zinc-600">导出时将自动居中裁切为 {PRINT_SPEC_OPTIONS.find(o => o.value === printSpec)?.label} 比例</p>
+            )}
+          </div>
+
+          {/* v15 — Minimalist Frame */}
+          <div className="space-y-2 border-t border-zinc-800 pt-3">
+            <button
+              className="w-full flex items-center justify-between text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              onClick={() => setFrameExpanded(v => !v)}
+            >
+              <span className="flex items-center gap-1.5">
+                <Frame className="w-3 h-3" />
+                简约边框
+                {frameStyle !== "none" && (
+                  <span className="ml-1 px-1 py-0.5 rounded text-[10px] bg-indigo-600/30 text-indigo-300">
+                    {FRAME_STYLE_OPTIONS.find(o => o.value === frameStyle)?.label}
+                  </span>
+                )}
+              </span>
+              {frameExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {frameExpanded && (
+              <div className="space-y-3 pl-1">
+                {/* Style selector */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-zinc-600">边框风格</label>
+                  <div className="flex flex-wrap gap-1">
+                    {FRAME_STYLE_OPTIONS.map(({ label, value }) => (
+                      <button key={value} onClick={() => setFrameStyle(value)}
+                        className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                          frameStyle === value
+                            ? value === "none" ? "bg-zinc-600 text-white"
+                              : value === "white" ? "bg-white text-zinc-900 ring-1 ring-zinc-400"
+                              : value === "dark"  ? "bg-zinc-900 text-zinc-100 ring-1 ring-zinc-600"
+                              : "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
+                            : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {frameStyle !== "none" && (
+                  <>
+                    {/* Canvas ratio */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-zinc-600">画布比例</label>
+                      <div className="flex flex-wrap gap-1">
+                        {FRAME_RATIO_OPTIONS.map(({ label, value }) => (
+                          <button key={value} onClick={() => setFrameRatio(value)}
+                            className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                              frameRatio === value
+                                ? "bg-indigo-600 text-white"
+                                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                            }`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-zinc-600 leading-tight">
+                        照片将居中排布，信息栏根据剩余空间动态规划
+                      </p>
+                    </div>
+
+                    {/* Content toggles */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-zinc-600">展示内容</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          { key: "exif", label: "EXIF 参数",  state: frameShowExif, set: setFrameShowExif },
+                          { key: "desc", label: "照片描述",   state: frameShowDesc, set: setFrameShowDesc },
+                          { key: "ai",   label: "AI 分析摘要", state: frameShowAi,  set: setFrameShowAi  },
+                        ]).map(({ key, label, state, set }) => (
+                          <button key={key} onClick={() => set(!state)}
+                            className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                              state
+                                ? "bg-indigo-600/80 text-white"
+                                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                            }`}>
+                            {state ? "✓ " : ""}{label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-zinc-600 leading-tight">
+                        相机 · 镜头 · 拍摄参数始终显示；描述和 AI 摘要可选
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
 
