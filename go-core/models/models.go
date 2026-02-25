@@ -56,6 +56,9 @@ type ExifData struct {
 	GPSLongitude     string
 	Software         string
 	DateTimeOriginal string
+	// IPTC / XMP fields (extracted on upload, written on export)
+	Copyright string // dc:rights / EXIF Copyright
+	Creator   string // dc:creator / EXIF Artist
 }
 
 type FeatureFlag struct {

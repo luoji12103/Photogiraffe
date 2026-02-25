@@ -224,6 +224,38 @@ def process_image(minio_client, photo_id, minio_path):
         except Exception as e:
             logger.warning(f"Failed to extract EXIF data: {e}")
 
+        # Phase 13: Extract embedded XMP for IPTC copyright/creator metadata.
+        # Scan raw bytes for <?xpacket XMP envelope present in JPEG/HEIF/DNG.
+        xmp_copyright, xmp_creator = "", ""
+        try:
+            xmp_match = re.search(rb'<x:xmpmeta[\s\S]*?</x:xmpmeta>', img_data)
+            if xmp_match:
+                xmp_str = xmp_match.group(0).decode("utf-8", errors="ignore")
+                # dc:rights — copyright
+                cr = re.search(
+                    r'<dc:rights[^>]*>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)</rdf:li>',
+                    xmp_str,
+                )
+                if cr:
+                    xmp_copyright = cr.group(1).strip()
+                # dc:creator — photographer / artist
+                au = re.search(
+                    r'<dc:creator[^>]*>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)</rdf:li>',
+                    xmp_str,
+                )
+                if au:
+                    xmp_creator = au.group(1).strip()
+                logger.info(f"XMP extracted — copyright: {xmp_copyright!r}, creator: {xmp_creator!r}")
+        except Exception as e:
+            logger.debug(f"XMP extraction skipped: {e}")
+
+        if not exif_data:
+            exif_data = {}
+        if xmp_copyright:
+            exif_data["Copyright"] = xmp_copyright
+        if xmp_creator:
+            exif_data["Creator"] = xmp_creator
+
         # Phase 3 Step 1: Determine ICC/color-space metadata before converting.
         # This must happen while 'img' still has its original info dict.
         icc_profile_name = get_icc_profile_name(img, is_raw)
@@ -600,9 +632,42 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
             save_kwargs["quality"]   = quality
             save_kwargs["subsampling"] = 0  # 4:4:4
 
-            if embed_exif and orig_exif_bytes:
+            if embed_exif:
+                # Phase 13: fetch IPTC copyright/creator from Go Core internal API
+                iptc_copyright, iptc_creator, iptc_desc = b"", b"", b""
                 try:
-                    exif_dict  = piexif.load(orig_exif_bytes)
+                    iptc_res = requests.get(
+                        f"{GO_CORE_URL}/internal/photos/{photo_id}/iptc",
+                        headers={"X-Internal-Secret": INTERNAL_SECRET},
+                        timeout=5,
+                    )
+                    if iptc_res.ok:
+                        iptc_json = iptc_res.json()
+                        def _enc(s): return (s or "").encode("latin-1", errors="replace")
+                        iptc_copyright = _enc(iptc_json.get("copyright", ""))
+                        iptc_creator   = _enc(iptc_json.get("creator", ""))
+                        iptc_desc      = _enc(iptc_json.get("description", ""))
+                except Exception as ex:
+                    logger.debug(f"[export:{job_id}] IPTC fetch skipped: {ex}")
+
+                if orig_exif_bytes:
+                    try:
+                        exif_dict = piexif.load(orig_exif_bytes)
+                    except Exception as ex:
+                        logger.warning(f"[export:{job_id}] EXIF load failed: {ex}")
+                        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}}
+                else:
+                    exif_dict = {"0th": {}, "Exif": {}, "GPS": {}}
+
+                # Inject IPTC fields into IFD0
+                if iptc_copyright:
+                    exif_dict["0th"][piexif.ImageIFD.Copyright] = iptc_copyright
+                if iptc_creator:
+                    exif_dict["0th"][piexif.ImageIFD.Artist] = iptc_creator
+                if iptc_desc:
+                    exif_dict["0th"][piexif.ImageIFD.ImageDescription] = iptc_desc
+
+                try:
                     save_kwargs["exif"] = piexif.dump(exif_dict)
                 except Exception as ex:
                     logger.warning(f"[export:{job_id}] EXIF re-injection failed: {ex}")

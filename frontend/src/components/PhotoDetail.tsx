@@ -12,6 +12,7 @@ import GLCanvas from "./GLCanvas";
 import AdjustPanel from "./AdjustPanel";
 import ColorSpaceIndicator from "./ColorSpaceIndicator";
 import ExportPanel from "./ExportPanel";
+import IPTCPanel from "./IPTCPanel";
 import PresetPanel from "./PresetPanel";
 
 interface ExifData {
@@ -399,6 +400,11 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
 
               {/* Export Engine */}
               <ExportPanel photoId={photo.ID} adjustParams={adjustParams} />
+
+              <div className="h-px bg-zinc-800 my-6" />
+
+              {/* IPTC / Copyright metadata editor */}
+              <IPTCPanel photoId={photo.ID} />
 
               <div className="h-px bg-zinc-800 my-6" />
 

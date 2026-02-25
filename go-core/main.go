@@ -1521,6 +1521,80 @@ func main() {
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 13 — IPTC / XMP Metadata (copyright & creator)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/photos/:id/iptc — read IPTC/XMP metadata
+	app.Get("/api/photos/:id/iptc", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		id := c.Params("id")
+
+		var photo models.Photo
+		q := database.DB.Preload("ExifData").Where("id = ?", id)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		if result := q.First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		copyright := photo.ExifData.Copyright
+		creator := photo.ExifData.Creator
+		return c.JSON(fiber.Map{
+			"photo_id":    photo.ID,
+			"description": photo.Description,
+			"tags":        photo.Tags,
+			"copyright":   copyright,
+			"creator":     creator,
+		})
+	})
+
+	// PUT /api/photos/:id/iptc — update copyright & creator
+	app.Put("/api/photos/:id/iptc", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		id := c.Params("id")
+
+		var body struct {
+			Copyright string `json:"copyright"`
+			Creator   string `json:"creator"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		var photo models.Photo
+		if result := database.DB.Where("id = ? AND user_id = ?", id, uid).First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+
+		var exif models.ExifData
+		if result := database.DB.Where("photo_id = ?", photo.ID).First(&exif); result.Error != nil {
+			exif = models.ExifData{PhotoID: photo.ID}
+		}
+		exif.Copyright = body.Copyright
+		exif.Creator = body.Creator
+		database.DB.Save(&exif)
+
+		return c.JSON(fiber.Map{"message": "IPTC metadata updated"})
+	})
+
+	// GET /internal/photos/:id/iptc — internal endpoint for Python worker (no JWT)
+	app.Get("/internal/photos/:id/iptc", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+
+		var photo models.Photo
+		if result := database.DB.Preload("ExifData").Where("id = ?", id).First(&photo); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		return c.JSON(fiber.Map{
+			"photo_id":    photo.ID,
+			"description": photo.Description,
+			"copyright":   photo.ExifData.Copyright,
+			"creator":     photo.ExifData.Creator,
+		})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 6 — Share Links (public, unauthenticated access)
 	// ─────────────────────────────────────────────────────────────────────────
 
