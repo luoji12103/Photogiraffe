@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-25（Phase 11 完成）
-> **当前已交付至**：v11.5（Phase 11 前端视觉与体验全面升级）
-> **下一步工作**：Phase 12（方向待定）
+> **本文最后更新**：2026-02-25（Phase 13 完成）
+> **当前已交付至**：v13.5（Phase 13 IPTC/XMP 元数据写入）
+> **下一步工作**：Phase 14（相册 ZIP + PDF + 打印规格裁切）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`dd2ad77` v11.5: infinite scroll pagination with IntersectionObserver
+> **最新 commit**：`ea91f92` feat: Phase 13 — IPTC/XMP metadata (v13.1–v13.5)
 
 ---
 
@@ -182,6 +182,10 @@ MinIO (内部，9001 仅 console)
 ### exif_data
 camera_model, lens_model, focal_length, aperture, shutter_speed, iso, color_space, icc_profile_name, gps_latitude, gps_longitude, software, date_time_original
 
+**Phase 13 新增字段：**
+- `copyright string` — dc:rights / EXIF Copyright（导出时写入 IFD0:Copyright）
+- `creator string` — dc:creator / EXIF Artist（导出时写入 IFD0:Artist）
+
 ### presets
 user_id, name, description, adjust_params (jsonb), platforms (jsonb), file_path
 
@@ -347,6 +351,9 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | PUT | /internal/photos/:id/analysis | Secret | AI 分析结果回调 |
 | PUT | /internal/photos/:id/inferred-params | Secret | 参数推断结果回调 |
 | PUT | /internal/exports/:job_id/status | Secret | 导出状态回调 |
+| GET | /api/photos/:id/iptc | JWT（同属/SA）| 读取 IPTC 元数据（copyright, creator）|
+| PUT | /api/photos/:id/iptc | JWT（同属）| 更新 copyright + creator |
+| GET | /internal/photos/:id/iptc | Secret | Worker 读取 IPTC（无 JWT）|
 
 ---
 
@@ -371,6 +378,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | feature/[name] | Feature Flag 查询 |
 | **events/stream** | **SSE 流式代理**（流式转发，不缓冲）|
 | image | MinIO presigned URL 代理 |
+| photos/[id]/iptc | GET/PUT IPTC 元数据代理（Phase 13）|
 
 ---
 
@@ -402,6 +410,9 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v11.3** | `f025a92` | PhotoGrid SkeletonCard、画廊空状态 EmptyGallery、DashboardSkeleton、Albums 骨架屏、Toast 升级 |
 | **v11.4** | `f025a92` | PhotoGrid stagger 卡片入场动画、albums AnimatePresence、login/register framer-motion、全体 pg-* token 适配 |
 | **v11.5** | `dd2ad77` | 无限滚动分页：IntersectionObserver + GET /photos?page=&limit= + 滚动位置恢复 |
+| **v12.1** | `8d9c02e` | 修复 2 项 pre-existing 测试失败 → **129/129**（preset ID 顶层暴露 + PublicPhoto is_public 字段）|
+| **v12.2–12.4** | `a41027b` | profile/map/compare 三页全面 pg-* 主题适配 |
+| **v13.1–13.5** | `ea91f92` | IPTC/XMP 元数据：模型扩展 + API 3 端点 + Worker XMP 提取/IPTC 写入 + IPTCPanel 前端组件 |
 
 ---
 
@@ -415,6 +426,9 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | 29–32 | Phase 6–9（已完成）|
 | **33** | **Phase 10 Roadmap（已完成）** |
 | **34** | **Phase 11 Roadmap（已完成）** |
+| **35** | **Phase 12 Roadmap（已完成）** |
+| **36** | **Phase 13 Roadmap（已完成）** |
+| **37** | **Phase 14 Roadmap（进行中）** |
 
 ---
 
@@ -484,35 +498,45 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 12 方向
+## 十五、当前状态 & Phase 14 方向
 
-**HEAD**：`dd2ad77` v11.5 无限滚动分页 + Phase 11 全部完成
-**集成测试**：`127/129 PASS`（2 项 pre-existing 失败与本次无关）
+**HEAD**：`ea91f92` Phase 13 IPTC/XMP 元数据写入（v13.1–v13.5）
+**集成测试**：**`129/129 PASS`** ✅
 **全部服务**：正常运行于 Docker Compose
 
-### Phase 11 完整交付清单
+### 最近完成阶段摘要
+
+| 阶段 | Commit | 状态 | 内容摘要 |
+|------|--------|------|----------|
+| Phase 12 v12.1 | `8d9c02e` | ✅ | 修复 preset ID + PublicPhoto is_public → **129/129** |
+| Phase 12 v12.2–12.4 | `a41027b` | ✅ | /profile, /map, /compare pg-* 主题适配 |
+| Phase 13 v13.1–13.5 | `ea91f92` | ✅ | ExifData Copyright/Creator + API + Worker XMP/IPTC + IPTCPanel |
+
+### Phase 13 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v11.1 | ✅ | ThemeContext.tsx + globals.css CSS 变量体系 + layout.tsx FOUC 防闪脚本 |
-| v11.2 | ✅ | ClientLayout.tsx 完全重写：可折叠侧边栏、移动端底部导航、主题切换器 |
-| v11.3 | ✅ | PhotoGrid SkeletonCard、EmptyGallery、DashboardSkeleton、全体 pg-* token 适配 |
-| v11.4 | ✅ | PhotoGrid stagger 动画、AnimatePresence、framer-motion 页面过渡 |
-| v11.5 | ✅ | IntersectionObserver 无限滚动、GET /photos?page=&limit=24、滚动位置 sessionStorage 恢复 |
+| v13.1 | ✅ | models.go Copyright/Creator + GET/PUT /api/photos/:id/iptc + GET /internal/.../iptc + Next.js 代理 |
+| v13.2 | ✅ | process_image() XMP 正则扫描 dc:rights / dc:creator → exif_data |
+| v13.3 | ✅ | process_export_task() 拉取 IPTC → piexif IFD0 注入 Copyright/Artist/ImageDescription |
+| v13.4 | ✅ | IPTCPanel.tsx 前端组件 + PhotoDetail.tsx editMode 集成 |
+| v13.5 | ✅ | go build 通过 + 129/129 测试 + git commit |
 
-### Phase 12 候选方向
+### Phase 14 规划（outline/agent/37_Phase14_Roadmap.md）
 
-1. **地图功能完善**：`/map` 路由、GPS 批量编辑、地理集群视图
-2. **协作与社交**：关注系统、照片评论、点赞/收藏
-3. **高级导出**：相册批量 ZIP 导出、PDF 相册生成、打印规格裁切
-4. **IPTC/XMP 元数据写入**：导出时写 IPTC，自动提取内嵌 XMP
-5. **移动端 PWA 强化**：Service Worker 离线缓存、推送通知
-6. **pre-existing 测试修复**：Returned preset ID matches + public photos only
+| 子版本 | 内容 |
+|--------|------|
+| v14.1 | Go Core：POST /api/albums/:id/export + GET /api/albums/:id/exports + 内部相册照片端点 |
+| v14.2 | Worker：album_export 任务 → ZIP 打包 → MinIO uploads |
+| v14.3 | Worker：PDF 相册生成（fpdf2），含封面、EXIF 页脚、Copyright |
+| v14.4 | Worker + ExportPanel：`print_spec`（4x6/5x7/a4/square）中心裁切辅助函数 |
+| v14.5 | 前端：Albums 页面导出按钮 + ExportPanel 打印规格选项 |
+| v14.6 | 构建/测试/提交 |
 
-**开始 Phase 12 步骤**：
-1. 确认方向后编写 `outline/agent/35_Phase12_Roadmap.md`
-2. 按规范逐步实现 → build → test → commit
-3. 集成测试目标：通过率维持或提升至 129/129
+**开始 Phase 14 步骤**：
+1. 阅读 `outline/agent/37_Phase14_Roadmap.md`
+2. 按规范实现 → build → 129/129 test → commit
+3. 完成后更新第十节版本历史和本节
 
 ---
 
