@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-25（Phase 14 完成）
-> **当前已交付至**：v14.6（Phase 14 相册 ZIP/PDF 导出 + 冲印规格裁切）
-> **下一步工作**：Phase 15（待定）
+> **本文最后更新**：2026-02-25（Phase 15 完成）
+> **当前已交付至**：v15.4（Phase 15 简约边框渲染引擎）
+> **下一步工作**：Phase 16（主色调提取 + 颜色筛选器）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`3f091da` feat: Phase 14 — album ZIP+PDF export + print spec crop (v14.1-v14.6)
+> **最新 commit**：`d9a21c0` feat: Phase 15 — minimalist frame rendering engine (v15.1-v15.4)
 
 ---
 
@@ -415,6 +415,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v12.2–12.4** | `a41027b` | profile/map/compare 三页全面 pg-* 主题适配 |
 | **v13.1–13.5** | `ea91f92` | IPTC/XMP 元数据：模型扩展 + API 3 端点 + Worker XMP 提取/IPTC 写入 + IPTCPanel 前端组件 |
 | **v14.1–14.6** | `3f091da` | 相册批量导出：ExportJob 扩展 + 3 个相册端点 + Worker ZIP/PDF + 冲印裁切 + 前端导出面板 |
+| **v15.1–15.4** | `d9a21c0` | 简约边框渲染：/internal/photos/:id/meta + Worker frame engine（8 函数，3 主题，9 比例，动态布局）+ ExportPanel 边框 UI |
 
 ---
 
@@ -431,6 +432,9 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **35** | **Phase 12 Roadmap（已完成）** |
 | **36** | **Phase 13 Roadmap（已完成）** |
 | **37** | **Phase 14 Roadmap（已完成）** |
+| **38** | **Phase 15 Roadmap（已完成）** |
+| **38** | **Phase 15 Roadmap（已完成）** |
+| **38** | **Phase 15 Roadmap（已完成）** |
 
 ---
 
@@ -500,9 +504,9 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 15 方向
+## 十五、当前状态 & Phase 16 方向
 
-**HEAD**：`3f091da` Phase 14 相册批量导出（v14.1-v14.6）
+**HEAD**：`d9a21c0` Phase 15 简约边框渲染引擎（v15.1-v15.4）
 **集成测试**：**`129/129 PASS`** ✅
 **全部服务**：正常运行于 Docker Compose
 
@@ -510,29 +514,32 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 | 阶段 | Commit | 状态 | 内容摘要 |
 |------|--------|------|----------|
-| Phase 12 v12.1 | `8d9c02e` | ✅ | 修复 preset ID + PublicPhoto is_public → **129/129** |
-| Phase 12 v12.2–12.4 | `a41027b` | ✅ | /profile, /map, /compare pg-* 主题适配 |
 | Phase 13 v13.1–13.5 | `ea91f92` | ✅ | ExifData Copyright/Creator + API + Worker XMP/IPTC + IPTCPanel |
 | Phase 14 v14.1–14.6 | `3f091da` | ✅ | ExportJob 扩展 + 相册 ZIP/PDF 导出 + 冲印规格裁切 + 前端导出面板 |
+| Phase 15 v15.1–15.4 | `d9a21c0` | ✅ | /internal/photos/:id/meta + frame engine（8 函数，3 主题，9 比例）+ ExportPanel 边框 UI |
 
-### Phase 14 完整交付清单
+### Phase 15 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v14.1 | ✅ | models.go AlbumID/JobType + queue PublishAlbumExportTask + 3 个相册端点 |
-| v14.2 | ✅ | _PRINT_SPEC_RATIOS + _crop_print_spec() + _download_photo_for_export() |
-| v14.3 | ✅ | _album_to_zip() → export/album-{id}-{job_id}.zip |
-| v14.4 | ✅ | _album_to_pdf()（fpdf2）+ process_album_export() + 主循环 album_export 分发 + fpdf2 依赖 |
-| v14.5 | ✅ | api/albums/[id]/export 代理路由 + 相册页导出面板 + ExportPanel print_spec 选项 |
-| v14.6 | ✅ | go build 通过 + 129/129 测试 + git commit `3f091da` |
+| v15.1 | ✅ | Go Core GET /internal/photos/:id/meta（13 字段，X-Internal-Secret）|
+| v15.2 | ✅ | Worker frame engine：ImageDraw/Font + _CANVAS_RATIOS + _FRAME_THEMES + 8 函数 + step 5b |
+| v15.3 | ✅ | ExportPanel.tsx：FrameStyle/FrameRatio 类型 + 6 状态 + 可折叠边框 UI + POST 字段 |
+| v15.4 | ✅ | go build 通过 + 129/129 测试 + git commit `d9a21c0` |
 
-### Phase 15 方向（待规划）
+### Phase 15 新增 API
 
-下一 Phase 尚未规划，建议方向包括：
-- 人像识别 / 人脸分组
-- 地图视图增强（聚类热力图）
-- 离线/PWA 能力增强
-- 协作相册（多人上传）
+| Method | Path | Auth | 说明 |
+|--------|------|------|------|
+| GET | /internal/photos/:id/meta | X-Internal-Secret | 返回照片描述/AI分析/IPTC/EXIF 完整元数据（13 字段）|
+
+### Phase 16 方向（待规划）
+
+| 优先级 | 方向 | 说明 |
+|--------|------|------|
+| 高 | 主色调提取 | Worker k-means + DominantColors 字段 + 前端颜色筛选 |
+| 中 | 感知哈希去重 | pHash 计算 + 相似度检测 API |
+| 中 | 导出历史页 | 独立导出历史管理界面 |
 
 **开始下一 Phase 步骤**：
 1. 在 `outline/agent/` 创建新 Phase Roadmap 文档
