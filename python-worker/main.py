@@ -1176,11 +1176,13 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         # Mark job as processing
         _update_export_status(job_id, "processing")
 
-        # 1. Fetch photo record from Go Core (to get minio_path)
-        photo_res = requests.get(f"{GO_CORE_URL}/photos/{photo_id}", timeout=10)
-        photo_res.raise_for_status()
-        photo = photo_res.json()
-        minio_path = photo["MinioPath"]
+        # 1. Fetch photo record from Go Core via internal endpoint (X-Internal-Secret, no JWT needed)
+        photo_meta = _fetch_photo_meta(photo_id)
+        if not photo_meta or not photo_meta.get("minio_path"):
+            logger.error(f"[export:{job_id}] failed to fetch photo meta for photo_id={photo_id}")
+            _update_export_status(job_id, "failed")
+            return False
+        minio_path = photo_meta["minio_path"]
 
         logger.info(f"[export:{job_id}] Downloading {minio_path}...")
         response = minio_client.get_object(bucket, minio_path)
@@ -1221,12 +1223,11 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         if wm_path:
             img = _apply_watermark(img, minio_client, wm_path, wm_opacity, wm_pos)
 
-        # 5b. Phase 15 — Minimalist frame rendering
+        # 5b. Phase 15 — Minimalist frame rendering (reuse photo_meta from step 1)
         frame_style = opts.get("frame_style", "")
         if frame_style and frame_style not in ("none", "off", ""):
             try:
-                frame_meta = _fetch_photo_meta(photo_id)
-                img = _render_frame(img, frame_meta, opts)
+                img = _render_frame(img, photo_meta, opts)
                 logger.info(f"[export:{job_id}] frame rendered: style={frame_style} ratio={opts.get('frame_ratio','original')}")
             except Exception as fe:
                 logger.warning(f"[export:{job_id}] frame render failed (skipped): {fe}")

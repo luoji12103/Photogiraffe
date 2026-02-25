@@ -1607,6 +1607,7 @@ func main() {
 		}
 		return c.JSON(fiber.Map{
 			"photo_id":           photo.ID,
+			"minio_path":         photo.MinioPath,
 			"description":        photo.Description,
 			"ai_analysis":        aiAnalysis,
 			"copyright":          photo.ExifData.Copyright,
