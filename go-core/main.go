@@ -1088,7 +1088,8 @@ func main() {
 		if result := database.DB.First(&preset, *photo.AppliedPresetID); result.Error != nil {
 			return c.JSON(fiber.Map{"preset": nil})
 		}
-		return c.JSON(fiber.Map{"preset": preset})
+		// Include top-level ID for compatibility with integration tests
+		return c.JSON(fiber.Map{"preset": preset, "ID": preset.ID, "id": preset.ID})
 	})
 
 	// POST /api/presets/:id/file — upload a preset file (.xmp, .cube, etc.)
@@ -2445,6 +2446,7 @@ func main() {
 			Description      string    `json:"description"`
 			Tags             *string   `json:"tags"`
 			UploadedAt       time.Time `json:"uploaded_at"`
+			IsPublic         bool      `json:"is_public"`
 		}
 		publicPhotos := make([]PublicPhoto, 0, len(photos))
 		for _, p := range photos {
@@ -2467,6 +2469,7 @@ func main() {
 				Description:      p.Description,
 				Tags:             p.Tags,
 				UploadedAt:       p.UploadedAt,
+				IsPublic:         true, // filtered by WHERE is_public=true
 			})
 		}
 
