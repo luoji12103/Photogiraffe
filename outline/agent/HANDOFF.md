@@ -4,7 +4,7 @@
 > **当前已交付至**：v11.5（Phase 11 前端视觉与体验全面升级）
 > **下一步工作**：Phase 12（方向待定）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：v11.5 无限滚动分页 + IntersectionObserver
+> **最新 commit**：`dd2ad77` v11.5: infinite scroll pagination with IntersectionObserver
 
 ---
 
@@ -401,7 +401,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v11.2** | `f025a92` | ClientLayout.tsx 重写：可折叠侧边栏（240/64px）、移动端底部导航、framer-motion 活跃指示、主题切换器 |
 | **v11.3** | `f025a92` | PhotoGrid SkeletonCard、画廊空状态 EmptyGallery、DashboardSkeleton、Albums 骨架屏、Toast 升级 |
 | **v11.4** | `f025a92` | PhotoGrid stagger 卡片入场动画、albums AnimatePresence、login/register framer-motion、全体 pg-* token 适配 |
-| **v11.5** | `pending` | 无限滚动分页：IntersectionObserver + GET /photos?page=&limit= + 滚动位置恢复 |
+| **v11.5** | `dd2ad77` | 无限滚动分页：IntersectionObserver + GET /photos?page=&limit= + 滚动位置恢复 |
 
 ---
 
@@ -486,7 +486,7 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ## 十五、当前状态 & Phase 12 方向
 
-**HEAD**：v11.5 无限滚动分页 + Phase 11 全部完成
+**HEAD**：`dd2ad77` v11.5 无限滚动分页 + Phase 11 全部完成
 **集成测试**：`127/129 PASS`（2 项 pre-existing 失败与本次无关）
 **全部服务**：正常运行于 Docker Compose
 
