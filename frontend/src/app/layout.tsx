@@ -45,7 +45,23 @@ export default function RootLayout({
   modal: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        {/* Inline script to prevent FOUC — sets theme class before first paint */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            try {
+              var t = localStorage.getItem('pg-theme') || 'dark';
+              var r = t === 'system'
+                ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                : t;
+              document.documentElement.classList.remove('light','dark');
+              document.documentElement.classList.add(r);
+              document.documentElement.style.colorScheme = r;
+            } catch(e) {}
+          })();
+        `}} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

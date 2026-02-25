@@ -1,26 +1,156 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ──────────────────────────────────────────────────────────
+   Design Tokens — Photogiraffe Theme System
+   Light & Dark mode via .light / .dark on <html>
+   ────────────────────────────────────────────────────────── */
+
+/* ── Light Mode ── */
+:root,
+.light {
+  --pg-bg-base: #f8f8f8;
+  --pg-bg-surface: #ffffff;
+  --pg-bg-elevated: #f0f0f0;
+  --pg-bg-hover: #e8e8e8;
+  --pg-bg-active: #e0e0e0;
+  --pg-bg-overlay: rgba(0, 0, 0, 0.45);
+
+  --pg-border: #e2e2e2;
+  --pg-border-subtle: #ebebeb;
+  --pg-border-focus: #3b82f6;
+
+  --pg-text-primary: #111111;
+  --pg-text-secondary: #555555;
+  --pg-text-tertiary: #888888;
+  --pg-text-muted: #aaaaaa;
+  --pg-text-inverse: #ffffff;
+
+  --pg-accent: #3b82f6;
+  --pg-accent-hover: #2563eb;
+  --pg-accent-soft: rgba(59, 130, 246, 0.1);
+
+  --pg-success: #10b981;
+  --pg-warning: #f59e0b;
+  --pg-error: #ef4444;
+  --pg-info: #06b6d4;
+
+  --pg-shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --pg-shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+  --pg-shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
+
+  --pg-nav-bg: rgba(255,255,255,0.85);
+  --pg-nav-border: #eaeaea;
+
+  --pg-card-bg: #ffffff;
+  --pg-card-border: #efefef;
+  --pg-card-hover-shadow: 0 8px 24px rgba(0,0,0,0.08);
+
+  --pg-sidebar-width: 240px;
+  --pg-sidebar-collapsed: 64px;
+  --pg-topbar-height: 56px;
+
+  --pg-radius-sm: 6px;
+  --pg-radius-md: 10px;
+  --pg-radius-lg: 16px;
+  --pg-radius-full: 9999px;
+}
+
+/* ── Dark Mode ── */
+.dark {
+  --pg-bg-base: #09090b;
+  --pg-bg-surface: #111113;
+  --pg-bg-elevated: #1a1a1e;
+  --pg-bg-hover: #222226;
+  --pg-bg-active: #2a2a2e;
+  --pg-bg-overlay: rgba(0, 0, 0, 0.65);
+
+  --pg-border: #27272a;
+  --pg-border-subtle: #1e1e22;
+  --pg-border-focus: #60a5fa;
+
+  --pg-text-primary: #f0f0f0;
+  --pg-text-secondary: #a0a0a6;
+  --pg-text-tertiary: #6e6e76;
+  --pg-text-muted: #4a4a52;
+  --pg-text-inverse: #09090b;
+
+  --pg-accent: #60a5fa;
+  --pg-accent-hover: #93c5fd;
+  --pg-accent-soft: rgba(96, 165, 250, 0.12);
+
+  --pg-success: #34d399;
+  --pg-warning: #fbbf24;
+  --pg-error: #f87171;
+  --pg-info: #22d3ee;
+
+  --pg-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --pg-shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --pg-shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+
+  --pg-nav-bg: rgba(9,9,11,0.85);
+  --pg-nav-border: #1e1e22;
+
+  --pg-card-bg: #111113;
+  --pg-card-border: #1e1e22;
+  --pg-card-hover-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--pg-bg-base);
+  --color-foreground: var(--pg-text-primary);
+  --color-surface: var(--pg-bg-surface);
+  --color-elevated: var(--pg-bg-elevated);
+  --color-border: var(--pg-border);
+  --color-accent: var(--pg-accent);
+  --color-accent-hover: var(--pg-accent-hover);
+  --color-accent-soft: var(--pg-accent-soft);
+  --color-muted: var(--pg-text-muted);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Base Styles ── */
+body {
+  background: var(--pg-bg-base);
+  color: var(--pg-text-primary);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--pg-border);
+  border-radius: var(--pg-radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pg-text-tertiary);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--pg-accent-soft);
+  color: var(--pg-text-primary);
+}
+
+/* ── Focus Ring ── */
+:focus-visible {
+  outline: 2px solid var(--pg-border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Smooth transitions for theme switch ── */
+html.transitioning,
+html.transitioning *,
+html.transitioning *::before,
+html.transitioning *::after {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.2s ease, box-shadow 0.3s ease !important;
 }

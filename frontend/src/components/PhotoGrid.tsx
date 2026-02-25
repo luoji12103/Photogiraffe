@@ -18,25 +18,30 @@ interface PhotoGridProps {
   photos: Photo[];
   loading?: boolean;
   layout?: "grid" | "masonry";
-  // Multi-select props
   selectable?: boolean;
   selectedIds?: Set<number>;
   onToggle?: (id: number) => void;
 }
 
-// Individual card with IntersectionObserver-based lazy reveal
+/* ── Card enter animation variants ── */
+const cardVariants = {
+  hidden: { opacity: 0, y: 24, scale: 0.97 },
+  visible: (i: number) => ({
+    opacity: 1, y: 0, scale: 1,
+    transition: {
+      delay: Math.min(i * 0.04, 0.6),
+      duration: 0.45,
+      ease: [0.25, 0.46, 0.45, 0.94] as const,
+    },
+  }),
+};
+
+/* ── Photo Card ── */
 function PhotoCard({
-  photo,
-  selectable,
-  selected,
-  onToggle,
-  masonry = false,
+  photo, selectable, selected, onToggle, masonry = false, index = 0,
 }: {
-  photo: Photo;
-  selectable?: boolean;
-  selected?: boolean;
-  onToggle?: (id: number) => void;
-  masonry?: boolean;
+  photo: Photo; selectable?: boolean; selected?: boolean;
+  onToggle?: (id: number) => void; masonry?: boolean; index?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -45,12 +50,7 @@ function PhotoCard({
     const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); observer.disconnect(); } },
       { rootMargin: "200px" }
     );
     observer.observe(el);
@@ -63,27 +63,44 @@ function PhotoCard({
   const cardContent = (
     <motion.div
       layoutId={selectable ? undefined : `photo-container-${photo.ID}`}
-      className={`group relative overflow-hidden rounded-xl bg-zinc-200 dark:bg-zinc-800 cursor-pointer
-        ${masonry ? "w-full" : "aspect-square"}
-        ${selectable && selected ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-zinc-950" : ""}
-      `}
+      variants={cardVariants}
+      initial="hidden"
+      animate="visible"
+      custom={index}
+      className="group relative overflow-hidden cursor-pointer"
+      style={{
+        borderRadius: "var(--pg-radius-lg)",
+        background: "var(--pg-bg-elevated)",
+        boxShadow: "var(--pg-shadow-sm)",
+        border: selectable && selected
+          ? "2px solid var(--pg-accent)"
+          : "1px solid var(--pg-border-subtle)",
+        aspectRatio: masonry ? undefined : "1 / 1",
+      }}
+      whileHover={{
+        y: -4,
+        boxShadow: "var(--pg-card-hover-shadow)",
+        transition: { duration: 0.25 },
+      }}
     >
       {photo.Status === "completed" && visible ? (
-        <motion.div layoutId={selectable ? undefined : `photo-image-${photo.ID}`} className={masonry ? "w-full" : "w-full h-full"}>
+        <motion.div
+          layoutId={selectable ? undefined : `photo-image-${photo.ID}`}
+          className={masonry ? "w-full" : "w-full h-full"}
+        >
           {masonry ? (
-            // In masonry mode, use natural image dimensions
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={imageUrl}
               alt={photo.OriginalFilename}
-              className="w-full h-auto block transition-transform duration-300 group-hover:scale-105"
+              className="w-full h-auto block transition-transform duration-500 ease-out group-hover:scale-[1.03]"
             />
           ) : (
             <Image
               src={imageUrl}
               alt={photo.OriginalFilename}
               fill
-              className="object-cover transition-transform duration-300 group-hover:scale-105"
+              className="object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03]"
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
               unoptimized
             />
@@ -91,20 +108,33 @@ function PhotoCard({
         </motion.div>
       ) : photo.Status === "processing" ? (
         <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center`}>
-          <span className="text-sm text-zinc-500 animate-pulse">Processing…</span>
+          <div className="flex flex-col items-center gap-2">
+            <div
+              className="w-6 h-6 border-2 rounded-full animate-spin"
+              style={{ borderColor: "var(--pg-border)", borderTopColor: "var(--pg-accent)" }}
+            />
+            <span className="text-xs" style={{ color: "var(--pg-text-muted)" }}>处理中…</span>
+          </div>
         </div>
       ) : photo.Status === "failed" ? (
         <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center`}>
-          <span className="text-sm text-red-400">Failed</span>
+          <span className="text-sm" style={{ color: "var(--pg-error)" }}>处理失败</span>
         </div>
       ) : (
-        <div className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center bg-zinc-100 dark:bg-zinc-800`} />
+        <div
+          className={`flex ${masonry ? "min-h-[120px]" : "h-full"} w-full items-center justify-center`}
+          style={{ background: "var(--pg-bg-elevated)" }}
+        />
       )}
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-      <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-4 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+      {/* Hover overlay */}
+      <div
+        className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        style={{ background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)" }}
+      />
+      <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 translate-y-2 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
         <p className="text-sm font-medium text-white truncate">{photo.OriginalFilename}</p>
-        <p className="text-xs text-zinc-300" suppressHydrationWarning>
+        <p className="text-xs text-white/70" suppressHydrationWarning>
           {new Date(photo.UploadedAt).toLocaleDateString()}
         </p>
       </div>
@@ -113,7 +143,10 @@ function PhotoCard({
       {selectable && (
         <div className="absolute top-2 right-2 z-10">
           {selected ? (
-            <CheckCircle2 className="w-6 h-6 text-sky-400 drop-shadow-md" />
+            <CheckCircle2
+              className="w-6 h-6 drop-shadow-md"
+              style={{ color: "var(--pg-accent)" }}
+            />
           ) : (
             <Circle className="w-6 h-6 text-white/70 drop-shadow-md opacity-0 group-hover:opacity-100 transition-opacity" />
           )}
@@ -135,55 +168,59 @@ function PhotoCard({
   );
 }
 
-// Skeleton card for loading state
-function SkeletonCard({ masonry = false }: { masonry?: boolean }) {
+/* ── Skeleton Card ── */
+function SkeletonCard({ masonry = false, index = 0 }: { masonry?: boolean; index?: number }) {
   return (
-    <div className={`rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse ${masonry ? "mb-4 h-40" : "aspect-square"}`} />
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: index * 0.05, duration: 0.3 }}
+      className="animate-pulse"
+      style={{
+        borderRadius: "var(--pg-radius-lg)",
+        background: "var(--pg-bg-elevated)",
+        aspectRatio: masonry ? undefined : "1 / 1",
+        height: masonry ? `${120 + Math.random() * 80}px` : undefined,
+        marginBottom: masonry ? "1.5rem" : undefined,
+      }}
+    />
   );
 }
 
 export default function PhotoGrid({
-  photos,
-  loading = false,
-  layout = "grid",
-  selectable = false,
-  selectedIds = new Set<number>(),
-  onToggle,
+  photos, loading = false, layout = "grid",
+  selectable = false, selectedIds = new Set<number>(), onToggle,
 }: PhotoGridProps) {
   if (loading) {
     if (layout === "masonry") {
       return (
-        <div style={{ columns: "200px", columnGap: "1.5rem" }}>
+        <div style={{ columns: "220px", columnGap: "1.5rem" }}>
           {Array.from({ length: 8 }).map((_, i) => (
-            <SkeletonCard key={i} masonry />
+            <SkeletonCard key={i} masonry index={i} />
           ))}
         </div>
       );
     }
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
         {Array.from({ length: 8 }).map((_, i) => (
-          <SkeletonCard key={i} />
+          <SkeletonCard key={i} index={i} />
         ))}
       </div>
     );
   }
 
-  if (photos.length === 0) {
-    return null;
-  }
+  if (photos.length === 0) return null;
 
   if (layout === "masonry") {
     return (
       <div style={{ columns: "220px", columnGap: "1.5rem" }}>
-        {photos.map((photo) => (
+        {photos.map((photo, i) => (
           <div key={photo.ID} style={{ breakInside: "avoid", marginBottom: "1.5rem" }}>
             <PhotoCard
-              photo={photo}
-              selectable={selectable}
-              selected={selectedIds.has(photo.ID)}
-              onToggle={onToggle}
-              masonry
+              photo={photo} selectable={selectable}
+              selected={selectedIds.has(photo.ID)} onToggle={onToggle}
+              masonry index={i}
             />
           </div>
         ))}
@@ -192,14 +229,12 @@ export default function PhotoGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-      {photos.map((photo) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+      {photos.map((photo, i) => (
         <PhotoCard
-          key={photo.ID}
-          photo={photo}
-          selectable={selectable}
-          selected={selectedIds.has(photo.ID)}
-          onToggle={onToggle}
+          key={photo.ID} photo={photo}
+          selectable={selectable} selected={selectedIds.has(photo.ID)}
+          onToggle={onToggle} index={i}
         />
       ))}
     </div>

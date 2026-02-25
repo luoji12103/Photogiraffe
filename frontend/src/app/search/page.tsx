@@ -86,35 +86,46 @@ export default function SearchPage() {
 
   const hasFilters = camera || lens || isoMin || isoMax || dateFrom || dateTo || colorSpace;
 
+  const inputStyle: React.CSSProperties = {
+    background: "var(--pg-bg-surface)",
+    border: "1px solid var(--pg-border)",
+    color: "var(--pg-text-primary)",
+    borderRadius: "var(--pg-radius-md)",
+  };
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white px-6 py-8 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-light tracking-wide text-zinc-200 mb-6">Advanced Search</h1>
+    <div className="px-6 py-8 max-w-7xl mx-auto" style={{ color: "var(--pg-text-primary)" }}>
+      <h1 className="text-2xl font-light tracking-wide mb-6" style={{ color: "var(--pg-text-secondary)" }}>高级搜索</h1>
 
       {/* Search bar */}
       <div className="flex gap-2 mb-4">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--pg-text-muted)" }} />
           <input
             type="text"
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={e => e.key === "Enter" && doSearch(1)}
             placeholder="搜索文件名 / 相机型号 / 镜头…"
-            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-9 pr-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500"
+            className="w-full pl-9 pr-4 py-2.5 text-sm placeholder-zinc-500 focus:outline-none"
+            style={{ ...inputStyle, borderColor: undefined }}
           />
         </div>
         <button
           onClick={() => setShowFilters(v => !v)}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm transition-colors ${
-            showFilters || hasFilters
-              ? "bg-blue-600/20 border-blue-500/40 text-blue-300"
-              : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200"
-          }`}
+          className="flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
+          style={{
+            borderRadius: "var(--pg-radius-md)",
+            border: "1px solid",
+            borderColor: showFilters || hasFilters ? "var(--pg-accent)" : "var(--pg-border)",
+            background: showFilters || hasFilters ? "color-mix(in srgb, var(--pg-accent) 10%, transparent)" : "var(--pg-bg-surface)",
+            color: showFilters || hasFilters ? "var(--pg-accent)" : "var(--pg-text-secondary)",
+          }}
         >
           <SlidersHorizontal className="w-4 h-4" />
-          <span>Filters</span>
+          <span>筛选</span>
           {hasFilters && (
-            <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+            <span className="text-white text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--pg-accent)" }}>
               {[camera, lens, isoMin, isoMax, dateFrom, dateTo, colorSpace].filter(Boolean).length}
             </span>
           )}
@@ -122,9 +133,10 @@ export default function SearchPage() {
         <button
           onClick={() => doSearch(1)}
           disabled={loading}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+          className="px-5 py-2.5 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+          style={{ background: "var(--pg-accent)", borderRadius: "var(--pg-radius-md)" }}
         >
-          {loading ? "…" : "Search"}
+          {loading ? "…" : "搜索"}
         </button>
       </div>
 

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { Aperture } from "lucide-react";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -27,8 +28,15 @@ export default function AuthGuard({ children, adminOnly = false }: AuthGuardProp
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--pg-bg-base)" }}>
+        <div className="flex flex-col items-center gap-4">
+          <Aperture className="w-10 h-10 animate-spin" style={{ color: "var(--pg-accent)", animationDuration: "3s" }} />
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--pg-accent)", animationDelay: "0ms" }} />
+            <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--pg-accent)", animationDelay: "200ms" }} />
+            <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--pg-accent)", animationDelay: "400ms" }} />
+          </div>
+        </div>
       </div>
     );
   }
