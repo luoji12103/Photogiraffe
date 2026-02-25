@@ -2128,6 +2128,154 @@ func main() {
 		return c.JSON(fiber.Map{"message": "share revoked"})
 	})
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 14 — Album batch export (ZIP / PDF)
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/albums/:id/export — create album export job
+	app.Post("/api/albums/:id/export", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		albumID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid album id"})
+		}
+
+		var album models.Album
+		if result := database.DB.Preload("Photos").First(&album, albumID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		if len(album.Photos) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "album has no photos"})
+		}
+		if len(album.Photos) > 200 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "album too large (max 200 photos)"})
+		}
+
+		var body struct {
+			Format     string `json:"format"`      // zip | pdf
+			Quality    int    `json:"quality"`     // 1–100
+			PrintSpec  string `json:"print_spec"`  // none | 4x6 | 5x7 | a4 | square
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Format == "" {
+			body.Format = "zip"
+		}
+		if body.Quality == 0 {
+			body.Quality = 85
+		}
+		if body.PrintSpec == "" {
+			body.PrintSpec = "none"
+		}
+
+		optsMap := map[string]interface{}{
+			"type":       "album_export",
+			"format":     body.Format,
+			"quality":    body.Quality,
+			"print_spec": body.PrintSpec,
+			"album_name": album.Name,
+		}
+		optsRaw, _ := json.Marshal(optsMap)
+
+		albumIDUint := uint(albumID)
+		job := models.ExportJob{
+			PhotoID:       0, // not a single photo
+			AlbumID:       &albumIDUint,
+			JobType:       "album",
+			UserID:        uid,
+			Status:        "pending",
+			ExportOptions: string(optsRaw),
+		}
+		if result := database.DB.Create(&job); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create export job"})
+		}
+
+		if err := queue.PublishAlbumExportTask(job.ID, uint(albumID), string(optsRaw)); err != nil {
+			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to queue export task"})
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"message":  "Album export job created",
+			"job_id":   job.ID,
+			"format":   body.Format,
+			"photos":   len(album.Photos),
+		})
+	})
+
+	// GET /api/albums/:id/exports — list export jobs for an album
+	app.Get("/api/albums/:id/exports", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		albumID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid album id"})
+		}
+
+		var album models.Album
+		if result := database.DB.First(&album, albumID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "album not found"})
+		}
+		if album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+
+		albumIDUint := uint(albumID)
+		var jobs []models.ExportJob
+		database.DB.Where("album_id = ? AND user_id = ?", albumIDUint, uid).
+			Order("created_at DESC").Find(&jobs)
+
+		return c.JSON(fiber.Map{"jobs": jobs, "total": len(jobs)})
+	})
+
+	// GET /internal/albums/:id/photos — worker fetches album photo list
+	app.Get("/internal/albums/:id/photos", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		albumID := c.Params("id")
+
+		type AlbumPhoto struct {
+			PhotoID          uint   `json:"photo_id"`
+			OriginalFilename string `json:"original_filename"`
+			MinioPath        string `json:"minio_path"`
+			Description      string `json:"description"`
+			Copyright        string `json:"copyright"`
+			Creator          string `json:"creator"`
+		}
+
+		type row struct {
+			PhotoID          uint
+			OriginalFilename string
+			MinioPath        string
+			Description      string
+			Copyright        string
+			Creator          string
+		}
+
+		var rows []row
+		database.DB.Table("album_photos").
+			Select("photos.id AS photo_id, photos.original_filename, photos.minio_path, photos.description, COALESCE(exif_data.copyright,'') AS copyright, COALESCE(exif_data.creator,'') AS creator").
+			Joins("JOIN photos ON photos.id = album_photos.photo_id AND photos.deleted_at IS NULL").
+			Joins("LEFT JOIN exif_data ON exif_data.photo_id = photos.id AND exif_data.deleted_at IS NULL").
+			Where("album_photos.album_id = ? AND photos.status = 'completed'", albumID).
+			Order("album_photos.id ASC").
+			Scan(&rows)
+
+		photos := make([]AlbumPhoto, 0, len(rows))
+		for _, r := range rows {
+			photos = append(photos, AlbumPhoto{
+				PhotoID:          r.PhotoID,
+				OriginalFilename: r.OriginalFilename,
+				MinioPath:        r.MinioPath,
+				Description:      r.Description,
+				Copyright:        r.Copyright,
+				Creator:          r.Creator,
+			})
+		}
+		return c.JSON(fiber.Map{"photos": photos, "total": len(photos)})
+	})
+
 	// GET /share/album/:token — public album view
 	app.Get("/share/album/:token", func(c *fiber.Ctx) error {
 		token := c.Params("token")

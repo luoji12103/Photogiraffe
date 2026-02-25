@@ -11,6 +11,7 @@ interface ExportPanelProps {
 }
 
 type ExportFormat = "jpeg" | "png" | "webp" | "tiff";
+type PrintSpec = "none" | "4x6" | "5x7" | "a4" | "square";
 type JobStatus = "idle" | "pending" | "processing" | "completed" | "failed";
 type OverlayPosition = "bottom_right" | "bottom_left" | "top_right" | "top_left" | "bottom_center";
 
@@ -29,6 +30,14 @@ const LONG_EDGE_OPTIONS = [
   { label: "4096px", value: 4096 },
 ];
 
+const PRINT_SPEC_OPTIONS: { label: string; value: PrintSpec }[] = [
+  { label: "不裁切", value: "none" },
+  { label: "4×6\"", value: "4x6" },
+  { label: "5×7\"", value: "5x7" },
+  { label: "A4",    value: "a4"  },
+  { label: "正方形", value: "square" },
+];
+
 const OVERLAY_POSITIONS: { label: string; value: OverlayPosition }[] = [
   { label: "右下", value: "bottom_right" },
   { label: "左下", value: "bottom_left" },
@@ -44,6 +53,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
   const [quality, setQuality] = useState(90);
   const [longEdge, setLongEdge] = useState(0);
   const [denoiseLevel, setDenoiseLevel] = useState(0);
+  const [printSpec, setPrintSpec] = useState<PrintSpec>("none");
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -124,6 +134,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
           quality,
           long_edge: longEdge,
           denoise_level: denoiseLevel,
+          print_spec: printSpec === "none" ? "" : printSpec,
           embed_exif: true,
           // v9.1 overlays
           overlay_signature:   overlaySignature,
@@ -154,7 +165,7 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
       setJobStatus("failed");
       setErrorMsg(e instanceof Error ? e.message : String(e));
     }
-}, [photoId, format, quality, longEdge, denoiseLevel,
+}, [photoId, format, quality, longEdge, denoiseLevel, printSpec,
      overlaySignature, overlayAvatar, overlayExif, overlayDescription,
      overlayPosition, overlayOpacity, adjustParams, pollStatus]);
 
@@ -234,6 +245,29 @@ export default function ExportPanel({ photoId, adjustParams }: ExportPanelProps)
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Print spec crop */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-zinc-500">冲印规格裁切</label>
+            <div className="flex flex-wrap gap-1">
+              {PRINT_SPEC_OPTIONS.map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => setPrintSpec(value)}
+                  className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                    printSpec === value
+                      ? "bg-teal-600 text-white"
+                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {printSpec !== "none" && (
+              <p className="text-[10px] text-zinc-600">导出时将自动居中裁切为 {PRINT_SPEC_OPTIONS.find(o => o.value === printSpec)?.label} 比例</p>
+            )}
           </div>
 
           {/* AI Denoise */}

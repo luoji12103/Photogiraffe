@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import {
   ArrowLeft, Trash2, Loader2, Share2, Link2, Link2Off,
-  Pencil, Check, X, Images, Plus
+  Pencil, Check, X, Images, Plus, Archive, Download, AlertCircle, CheckCircle
 } from "lucide-react";
 
 interface Photo {
@@ -44,6 +44,17 @@ export default function AlbumDetailPage() {
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // v14.5 — album export state
+  type ExportFmt = "zip" | "pdf";
+  type PrintSpec = "none" | "4x6" | "5x7" | "a4" | "square";
+  type AlbumJobStatus = "idle" | "processing" | "completed" | "failed";
+  const [exportFmt, setExportFmt] = useState<ExportFmt>("zip");
+  const [exportSpec, setExportSpec] = useState<PrintSpec>("none");
+  const [albumJobStatus, setAlbumJobStatus] = useState<AlbumJobStatus>("idle");
+  const [albumJobId, setAlbumJobId] = useState<number | null>(null);
+  const [albumDownloadUrl, setAlbumDownloadUrl] = useState<string | null>(null);
+  const [albumExportError, setAlbumExportError] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -110,6 +121,61 @@ export default function AlbumDetailPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // v14.5 — album export handlers
+  const pollAlbumExport = useCallback((jobId: number) => {
+    const timer = setInterval(async () => {
+      try {
+        const res = await authFetch(`/api/exports/${jobId}`);
+        if (!res.ok) return;
+        const job = await res.json();
+        if (job.Status === "completed") {
+          clearInterval(timer);
+          setAlbumJobStatus("completed");
+          const dlRes = await authFetch(`/api/exports/${jobId}/download`);
+          if (dlRes.ok) {
+            const dlData = await dlRes.json();
+            setAlbumDownloadUrl(dlData.url);
+          }
+        } else if (job.Status === "failed") {
+          clearInterval(timer);
+          setAlbumJobStatus("failed");
+          setAlbumExportError(job.ErrorMessage || "导出失败");
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+    setTimeout(() => {
+      clearInterval(timer);
+      setAlbumJobStatus(prev => {
+        if (prev === "processing") { setAlbumExportError("导出超时，请重试"); return "failed"; }
+        return prev;
+      });
+    }, 10 * 60 * 1000);
+  }, [authFetch]);
+
+  const handleAlbumExport = useCallback(async () => {
+    if (!album) return;
+    setAlbumJobStatus("processing");
+    setAlbumDownloadUrl(null);
+    setAlbumExportError("");
+    try {
+      const res = await authFetch(`/api/albums/${id}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          format: exportFmt,
+          print_spec: exportSpec === "none" ? "" : exportSpec,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "failed");
+      setAlbumJobId(data.job_id);
+      pollAlbumExport(data.job_id);
+    } catch (e: unknown) {
+      setAlbumJobStatus("failed");
+      setAlbumExportError(e instanceof Error ? e.message : String(e));
+    }
+  }, [album, id, exportFmt, exportSpec, authFetch, pollAlbumExport]);
 
   if (loading) {
     return (
@@ -253,6 +319,100 @@ export default function AlbumDetailPage() {
           ))}
         </div>
       )}
+      {/* v14.5 — Album Export Panel */}
+      <div className="mt-8 border-t border-zinc-800 pt-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Archive className="w-4 h-4 text-zinc-500" />
+          <h2 className="text-sm font-medium text-zinc-400">导出相册</h2>
+        </div>
+        <div className="space-y-3 max-w-sm">
+          {/* Format */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-zinc-500">格式</label>
+            <div className="flex gap-2">
+              {(["zip", "pdf"] as const).map(f => (
+                <button key={f} onClick={() => setExportFmt(f)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    exportFmt === f ? "bg-blue-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  }`}>
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-600">
+              {exportFmt === "zip" ? "将相册所有照片打包为 ZIP 压缩包" : "将相册所有照片生成 PDF 文档（含封面与 EXIF 摘要）"}
+            </p>
+          </div>
+          {/* Print spec */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-zinc-500">冲印规格裁切</label>
+            <div className="flex flex-wrap gap-1">
+              {([
+                { label: "不裁切", value: "none" },
+                { label: "4×6\"", value: "4x6" },
+                { label: "5×7\"", value: "5x7" },
+                { label: "A4",    value: "a4"  },
+                { label: "正方形", value: "square" },
+              ] as const).map(({ label, value }) => (
+                <button key={value} onClick={() => setExportSpec(value)}
+                  className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                    exportSpec === value ? "bg-teal-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Action / Status */}
+          {albumJobStatus === "idle" && (
+            <button onClick={handleAlbumExport}
+              disabled={!album.Photos?.length}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg text-sm font-medium transition-colors">
+              <Archive className="w-4 h-4" />
+              导出相册
+            </button>
+          )}
+
+          {albumJobStatus === "processing" && (
+            <div className="flex items-center gap-2 text-zinc-400 text-sm py-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>处理中…{albumJobId && <span className="text-zinc-600 ml-1">#{albumJobId}</span>}</span>
+            </div>
+          )}
+
+          {albumJobStatus === "completed" && albumDownloadUrl && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-emerald-400 text-sm">
+                <CheckCircle className="w-4 h-4" />
+                <span>导出完成！</span>
+              </div>
+              <a href={albumDownloadUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium transition-colors">
+                <Download className="w-4 h-4" />
+                下载
+              </a>
+              <button onClick={() => setAlbumJobStatus("idle")}
+                className="block text-xs text-zinc-500 hover:text-zinc-300 transition-colors mt-1">
+                重新导出
+              </button>
+            </div>
+          )}
+
+          {albumJobStatus === "failed" && (
+            <div className="space-y-2">
+              <div className="flex items-start gap-1.5 text-red-400 text-xs">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>{albumExportError || "导出失败"}</span>
+              </div>
+              <button onClick={() => setAlbumJobStatus("idle")}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                重试
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

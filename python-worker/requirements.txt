@@ -12,3 +12,4 @@ google-genai
 anthropic
 opencv-python-headless
 zhipuai
+fpdf2

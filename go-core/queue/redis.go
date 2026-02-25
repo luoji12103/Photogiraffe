@@ -75,6 +75,16 @@ func PublishExportTask(jobID uint, photoID uint, optsJSON string) error {
 	})
 }
 
+// PublishAlbumExportTask pushes an album export job onto the export_queue Redis Stream.
+func PublishAlbumExportTask(jobID uint, albumID uint, optsJSON string) error {
+	return PushTask("export_queue", map[string]interface{}{
+		"job_id":         jobID,
+		"album_id":       albumID,
+		"type":           "album_export",
+		"export_options": optsJSON,
+	})
+}
+
 // PublishInferParamsTask pushes an AI parameter inference job onto infer_params_queue.
 func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, apiKey, modelName string) error {
 	return PushTask("infer_params_queue", map[string]interface{}{

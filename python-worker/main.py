@@ -3,6 +3,7 @@ import re
 import time
 import logging
 import json
+import zipfile
 import requests
 import base64
 from io import BytesIO
@@ -556,6 +557,216 @@ def _apply_watermark(img: Image.Image, minio_client, watermark_path: str,
         return img
 
 
+# ─── Phase 14 helpers ────────────────────────────────────────────────────────
+
+# Print spec aspect ratios (width:height)
+_PRINT_SPEC_RATIOS = {
+    "4x6":    (4, 6),
+    "5x7":    (5, 7),
+    "a4":     (210, 297),   # 1:√2
+    "square": (1, 1),
+}
+
+
+def _crop_print_spec(img: "Image.Image", spec: str) -> "Image.Image":
+    """Centre-crop img to match a print spec aspect ratio.
+    Returns the original image unchanged when spec is 'none' or unknown.
+    """
+    if spec not in _PRINT_SPEC_RATIOS:
+        return img
+    rw, rh = _PRINT_SPEC_RATIOS[spec]
+    iw, ih = img.size
+    target_ratio = rw / rh
+    current_ratio = iw / ih
+    if abs(target_ratio - current_ratio) < 0.001:
+        return img
+    if current_ratio > target_ratio:
+        # too wide — crop sides
+        new_w = int(ih * target_ratio)
+        left = (iw - new_w) // 2
+        img = img.crop((left, 0, left + new_w, ih))
+    else:
+        # too tall — crop top/bottom
+        new_h = int(iw / target_ratio)
+        top = (ih - new_h) // 2
+        img = img.crop((0, top, iw, top + new_h))
+    return img
+
+
+def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str) -> bool:
+    """Phase 14: export all photos in an album as ZIP or PDF."""
+    opts: dict = {}
+    try:
+        opts = json.loads(opts_json)
+    except Exception:
+        pass
+
+    fmt        = opts.get("format", "zip").lower()          # zip | pdf
+    quality    = max(1, min(100, int(opts.get("quality", 85))))
+    print_spec = opts.get("print_spec", "none")
+    album_name = opts.get("album_name", f"album-{album_id}")
+    bucket     = "photos"
+
+    logger.info(f"[album-export:{job_id}] album={album_id} fmt={fmt} spec={print_spec}")
+
+    try:
+        _update_export_status(job_id, "processing")
+
+        # 1. Fetch photo list from internal endpoint
+        res = requests.get(
+            f"{GO_CORE_URL}/internal/albums/{album_id}/photos",
+            headers={"X-Internal-Secret": INTERNAL_SECRET},
+            timeout=15,
+        )
+        res.raise_for_status()
+        photos = res.json().get("photos", [])
+
+        if not photos:
+            raise ValueError("album has no completed photos")
+
+        logger.info(f"[album-export:{job_id}] {len(photos)} photos to process")
+
+        if fmt == "pdf":
+            output_path = _album_to_pdf(
+                minio_client, job_id, album_id, album_name, photos,
+                quality, print_spec, bucket
+            )
+        else:
+            output_path = _album_to_zip(
+                minio_client, job_id, album_id, album_name, photos,
+                quality, print_spec, bucket
+            )
+
+        _update_export_status(job_id, "completed", output_path=output_path)
+        logger.info(f"[album-export:{job_id}] done → {output_path}")
+        return True
+
+    except Exception as e:
+        logger.error(f"[album-export:{job_id}] failed: {e}", exc_info=True)
+        _update_export_status(job_id, "failed", error_message=str(e))
+        return False
+
+
+def _download_photo_for_export(minio_client, minio_path: str, quality: int, print_spec: str, bucket="photos") -> bytes:
+    """Download a completed proxy image, apply print-spec crop, and return JPEG bytes."""
+    # Use proxy path (already processed, sRGB)
+    proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
+    try:
+        resp = minio_client.get_object(bucket, proxy_path)
+        img_data = resp.read()
+        resp.close()
+        resp.release_conn()
+    except Exception:
+        # Fall back to raw if proxy missing
+        resp = minio_client.get_object(bucket, minio_path)
+        img_data = resp.read()
+        resp.close()
+        resp.release_conn()
+
+    img = Image.open(BytesIO(img_data)).convert("RGB")
+    if print_spec != "none":
+        img = _crop_print_spec(img, print_spec)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=quality, subsampling=0)
+    return buf.getvalue()
+
+
+def _album_to_zip(minio_client, job_id, album_id, album_name, photos, quality, print_spec, bucket) -> str:
+    """Package all album photos into a ZIP and upload to MinIO."""
+    zip_buf = BytesIO()
+    safe_name = re.sub(r'[^\w\-]', '_', album_name)[:40]
+
+    with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in photos:
+            try:
+                jpg_bytes = _download_photo_for_export(
+                    minio_client, p["minio_path"], quality, print_spec, bucket
+                )
+                base_name = p["original_filename"].rsplit(".", 1)[0] + ".jpg"
+                zf.writestr(base_name, jpg_bytes)
+                logger.debug(f"[album-export:{job_id}] packed {base_name}")
+            except Exception as e:
+                logger.warning(f"[album-export:{job_id}] skipping {p.get('photo_id')}: {e}")
+
+    zip_bytes = zip_buf.getvalue()
+    output_path = f"export/album-{album_id}-{job_id}.zip"
+    minio_client.put_object(
+        bucket, output_path, BytesIO(zip_bytes), len(zip_bytes),
+        content_type="application/zip"
+    )
+    logger.info(f"[album-export:{job_id}] ZIP uploaded ({len(zip_bytes)} bytes)")
+    return output_path
+
+
+def _album_to_pdf(minio_client, job_id, album_id, album_name, photos, quality, print_spec, bucket) -> str:
+    """Generate a PDF album with one photo per page and upload to MinIO."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        logger.warning("[album-export] fpdf2 not installed, falling back to ZIP")
+        return _album_to_zip(minio_client, job_id, album_id, album_name, photos, quality, print_spec, bucket)
+
+    import tempfile, math
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_margins(0, 0, 0)
+
+    # Cover page
+    pdf.add_page()
+    pdf.set_y(100)
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.cell(0, 15, album_name[:50], align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 10, f"{len(photos)} photos", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    page_w, page_h = 210, 297  # A4 mm
+    img_area_h = page_h - 20   # 10mm header + 10mm footer
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for idx, p in enumerate(photos):
+            try:
+                jpg_bytes = _download_photo_for_export(
+                    minio_client, p["minio_path"], quality, print_spec, bucket
+                )
+                tmp_path = os.path.join(tmpdir, f"p{idx}.jpg")
+                with open(tmp_path, "wb") as f:
+                    f.write(jpg_bytes)
+
+                img = Image.open(BytesIO(jpg_bytes))
+                iw, ih = img.size
+                # Fit into page area maintaining aspect ratio
+                scale = min(page_w / iw, img_area_h / ih)
+                disp_w = iw * scale
+                disp_h = ih * scale
+                x = (page_w - disp_w) / 2
+                y = 10  # top margin 10mm
+
+                pdf.add_page()
+                pdf.image(tmp_path, x=x, y=y, w=disp_w, h=disp_h)
+
+                # Footer: filename + copyright
+                pdf.set_font("Helvetica", "", 7)
+                pdf.set_y(page_h - 10)
+                footer = p.get("original_filename", "")
+                if p.get("copyright"):
+                    footer += f"  |  © {p['copyright']}"
+                pdf.cell(page_w, 5, footer[:80], align="C")
+
+            except Exception as e:
+                logger.warning(f"[album-export:{job_id}] PDF: skipping photo {p.get('photo_id')}: {e}")
+
+    pdf_bytes = bytes(pdf.output())
+    output_path = f"export/album-{album_id}-{job_id}.pdf"
+    minio_client.put_object(
+        bucket, output_path, BytesIO(pdf_bytes), len(pdf_bytes),
+        content_type="application/pdf"
+    )
+    logger.info(f"[album-export:{job_id}] PDF uploaded ({len(pdf_bytes)} bytes)")
+    return output_path
+
+
 def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str) -> bool:
     """
     Export pipeline:
@@ -875,9 +1086,13 @@ def main():
                     elif stream == EXPORT_STREAM_NAME:
                         job_id    = message_data.get("job_id")
                         photo_id  = message_data.get("photo_id")
+                        album_id  = message_data.get("album_id")
+                        task_type = message_data.get("type", "photo_export")
                         opts_json = message_data.get("export_options", "{}")
 
-                        if job_id and photo_id:
+                        if job_id and task_type == "album_export" and album_id:
+                            success = process_album_export(minio_client, job_id, album_id, opts_json)
+                        elif job_id and photo_id:
                             success = process_export_task(minio_client, job_id, photo_id, opts_json)
                         else:
                             logger.warning(f"Invalid export message data: {message_data}")
