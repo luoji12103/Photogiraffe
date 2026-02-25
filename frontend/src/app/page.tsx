@@ -36,7 +36,15 @@ export default function Home() {
     setLoading(true);
     authFetch(`/api/photos?sort=${sortParam}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
-      .then((data: Photo[]) => setPhotos(data))
+      .then((data) => {
+        // Go Core returns a paginated envelope { photos: [...], total, page, ... }
+        const list: Photo[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.photos)
+          ? data.photos
+          : [];
+        setPhotos(list);
+      })
       .catch((err) => console.error("Failed to load photos:", err))
       .finally(() => setLoading(false));
   }, [authFetch]);
