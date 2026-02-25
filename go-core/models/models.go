@@ -34,7 +34,7 @@ type Photo struct {
 	UploadedAt       time.Time
 	IsPublic         bool    `gorm:"default:false"`       // visible on public portfolio page
 	Description      string  `gorm:"type:text"`           // photographer's caption / note
-	Tags             string  `gorm:"type:jsonb"`          // JSON string array e.g. ["portrait","night"]
+	Tags             *string `gorm:"type:jsonb"`          // JSON string array e.g. ["portrait","night"]; pointer so zero value is NULL (valid jsonb)
 	ExifData         ExifData
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters

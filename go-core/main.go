@@ -2443,7 +2443,7 @@ func main() {
 			ThumbnailURL     string    `json:"thumbnail_url"`
 			CameraModel      string    `json:"camera_model"`
 			Description      string    `json:"description"`
-			Tags             string    `json:"tags"`
+			Tags             *string   `json:"tags"`
 			UploadedAt       time.Time `json:"uploaded_at"`
 		}
 		publicPhotos := make([]PublicPhoto, 0, len(photos))
