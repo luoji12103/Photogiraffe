@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import PhotoGrid from "@/components/PhotoGrid";
 import UploadPanel from "@/components/UploadPanel";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutGrid, Columns, ChevronDown, ImagePlus, Camera } from "lucide-react";
+import { LayoutGrid, Columns, ChevronDown, Camera, Loader2 } from "lucide-react";
+
+const PAGE_LIMIT = 24;
+const SCROLL_KEY = "pg-gallery-scroll";
 
 interface Photo {
   ID: number;
@@ -20,10 +23,10 @@ type LayoutOption = "grid" | "masonry";
 
 const SORT_LABELS: Record<SortOption, string> = {
   date_desc: "最新上传",
-  date_asc: "最早上传",
-  filename: "文件名",
-  camera: "相机型号",
-  iso: "ISO 值",
+  date_asc:  "最早上传",
+  filename:  "文件名",
+  camera:    "相机型号",
+  iso:       "ISO 值",
 };
 
 /* ── Empty State ── */
@@ -41,53 +44,130 @@ function EmptyGallery({ onUpload }: { onUpload?: () => void }) {
       >
         <Camera className="w-10 h-10" style={{ color: "var(--pg-accent)" }} />
       </div>
-      <h2
-        className="text-xl font-semibold mb-2"
-        style={{ color: "var(--pg-text-primary)" }}
-      >
+      <h2 className="text-xl font-semibold mb-2" style={{ color: "var(--pg-text-primary)" }}>
         开始你的摄影之旅
       </h2>
-      <p
-        className="text-sm max-w-md text-center mb-6"
-        style={{ color: "var(--pg-text-tertiary)" }}
-      >
+      <p className="text-sm max-w-md text-center mb-6" style={{ color: "var(--pg-text-tertiary)" }}>
         上传你的第一张照片，支持 RAW（ARW/CR2/CR3/NEF）、HEIF、JPEG 等格式。
         系统会自动提取 EXIF 数据并生成缩略图。
       </p>
-      <div className="flex items-center gap-3">
-        <UploadPanel onUploadComplete={onUpload || (() => {})} />
-      </div>
+      <UploadPanel onUploadComplete={onUpload || (() => {})} />
     </motion.div>
   );
 }
 
 export default function Home() {
   const { authFetch, user } = useAuth();
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sort, setSort] = useState<SortOption>("date_desc");
-  const [layout, setLayout] = useState<LayoutOption>("grid");
 
-  const loadPhotos = useCallback((sortParam: SortOption) => {
-    setLoading(true);
-    authFetch(`/api/photos?sort=${sortParam}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
-      .then((data) => {
-        const list: Photo[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.photos)
-          ? data.photos
-          : [];
-        setPhotos(list);
-      })
-      .catch((err) => console.error("Failed to load photos:", err))
-      .finally(() => setLoading(false));
-  }, [authFetch]);
+  const [photos, setPhotos]         = useState<Photo[]>([]);
+  const [loading, setLoading]       = useState(true);    // first-page load
+  const [loadingMore, setLoadingMore] = useState(false); // subsequent pages
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages]   = useState(1);
+  const [total, setTotal]             = useState(0);
+  const [hasMore, setHasMore]         = useState(false);
+  const [sort, setSort]             = useState<SortOption>("date_desc");
+  const [layout, setLayout]         = useState<LayoutOption>("grid");
 
+  // Ref for the IntersectionObserver sentinel
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // Prevent duplicate fetches
+  const fetchingRef = useRef(false);
+
+  /* ── Fetch a specific page, optionally appending ── */
+  const fetchPage = useCallback(
+    async (page: number, sortParam: SortOption, append: boolean) => {
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+
+      if (append) setLoadingMore(true);
+      else        setLoading(true);
+
+      try {
+        const res = await authFetch(
+          `/api/photos?sort=${sortParam}&page=${page}&limit=${PAGE_LIMIT}`
+        );
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+
+        const list: Photo[] = Array.isArray(data?.photos) ? data.photos : [];
+        const tp: number    = data?.total_pages ?? 1;
+        const tot: number   = data?.total       ?? list.length;
+
+        setPhotos((prev) => append ? [...prev, ...list] : list);
+        setCurrentPage(page);
+        setTotalPages(tp);
+        setTotal(tot);
+        setHasMore(page < tp);
+      } catch (err) {
+        console.error("Failed to load photos:", err);
+      } finally {
+        fetchingRef.current = false;
+        if (append) setLoadingMore(false);
+        else        setLoading(false);
+      }
+    },
+    [authFetch]
+  );
+
+  /* ── Initial load / sort change → reset to page 1 ── */
   useEffect(() => {
     if (!user) return;
-    loadPhotos(sort);
-  }, [user, sort, loadPhotos]);
+    setPhotos([]);
+    setCurrentPage(1);
+    setHasMore(false);
+    fetchPage(1, sort, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, sort]);
+
+  /* ── Restore scroll position after initial render ── */
+  useEffect(() => {
+    if (loading) return;
+    const saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved) {
+      window.scrollTo({ top: parseInt(saved, 10), behavior: "instant" });
+      sessionStorage.removeItem(SCROLL_KEY);
+    }
+  }, [loading]);
+
+  /* ── Save scroll position on unmount (SPA navigation) and page close ── */
+  useEffect(() => {
+    const save = () => sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+    window.addEventListener("beforeunload", save);
+    return () => {
+      save();                                          // save on component unmount
+      window.removeEventListener("beforeunload", save);
+    };
+  }, []);
+
+  /* ── IntersectionObserver: load next page when sentinel enters viewport ── */
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !fetchingRef.current) {
+          fetchPage(currentPage + 1, sort, true);
+        }
+      },
+      { rootMargin: "200px" } // trigger 200px before bottom
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, currentPage, sort, fetchPage]);
+
+  /* ── Layout preference persistence ── */
+  useEffect(() => {
+    const stored = localStorage.getItem("pg-gallery-layout") as LayoutOption | null;
+    if (stored && (stored === "grid" || stored === "masonry")) setLayout(stored);
+  }, []);
+
+  const handleLayoutChange = (l: LayoutOption) => {
+    setLayout(l);
+    localStorage.setItem("pg-gallery-layout", l);
+  };
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8" style={{ color: "var(--pg-text-primary)" }}>
@@ -99,15 +179,17 @@ export default function Home() {
         className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4"
       >
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-            照片库
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">照片库</h1>
           <p className="text-sm mt-1" style={{ color: "var(--pg-text-tertiary)" }}>
-            {loading ? "加载中…" : `${photos.length} 张照片`}
+            {loading
+              ? "加载中…"
+              : total > 0
+              ? `共 ${total} 张 · 已加载 ${photos.length} 张`
+              : "暂无照片"}
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <UploadPanel onUploadComplete={() => loadPhotos(sort)} />
+          <UploadPanel onUploadComplete={() => { setPhotos([]); fetchPage(1, sort, false); }} />
         </div>
       </motion.header>
 
@@ -147,18 +229,18 @@ export default function Home() {
           style={{ background: "var(--pg-bg-elevated)", border: "1px solid var(--pg-border)" }}
         >
           {([
-            { key: "grid" as LayoutOption, icon: LayoutGrid, label: "网格布局" },
-            { key: "masonry" as LayoutOption, icon: Columns, label: "瀑布流布局" },
+            { key: "grid"    as LayoutOption, icon: LayoutGrid, label: "网格布局" },
+            { key: "masonry" as LayoutOption, icon: Columns,    label: "瀑布流布局" },
           ]).map(({ key, icon: Icon, label }) => (
             <button
               key={key}
-              onClick={() => setLayout(key)}
+              onClick={() => handleLayoutChange(key)}
               title={label}
               className="p-1.5 rounded-md transition-all duration-200"
               style={{
-                background: layout === key ? "var(--pg-bg-surface)" : "transparent",
-                color: layout === key ? "var(--pg-text-primary)" : "var(--pg-text-muted)",
-                boxShadow: layout === key ? "var(--pg-shadow-sm)" : "none",
+                background:  layout === key ? "var(--pg-bg-surface)" : "transparent",
+                color:       layout === key ? "var(--pg-text-primary)" : "var(--pg-text-muted)",
+                boxShadow:   layout === key ? "var(--pg-shadow-sm)" : "none",
               }}
             >
               <Icon size={16} />
@@ -170,9 +252,31 @@ export default function Home() {
       {/* Content */}
       <main>
         {!loading && photos.length === 0 ? (
-          <EmptyGallery onUpload={() => loadPhotos(sort)} />
+          <EmptyGallery onUpload={() => { setPhotos([]); fetchPage(1, sort, false); }} />
         ) : (
-          <PhotoGrid photos={photos} loading={loading} layout={layout} />
+          <>
+            <PhotoGrid photos={photos} loading={loading} layout={layout} />
+
+            {/* Sentinel + loading-more indicator */}
+            <div ref={sentinelRef} className="h-12 flex items-center justify-center mt-4">
+              {loadingMore && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex items-center gap-2 text-sm"
+                  style={{ color: "var(--pg-text-muted)" }}
+                >
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>加载更多…</span>
+                </motion.div>
+              )}
+              {!hasMore && !loading && photos.length > 0 && (
+                <p className="text-xs" style={{ color: "var(--pg-text-muted)" }}>
+                  — 已加载全部 {total} 张照片 —
+                </p>
+              )}
+            </div>
+          </>
         )}
       </main>
     </div>

@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-25（全量重写）
-> **当前已交付至**：v10.5（Phase 10 全部完成）+ fix commit `57f2ffb`
-> **下一步工作**：Phase 11（方向待定，候选见第十五节）
+> **本文最后更新**：2026-02-25（Phase 11 完成）
+> **当前已交付至**：v11.5（Phase 11 前端视觉与体验全面升级）
+> **下一步工作**：Phase 12（方向待定）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`57f2ffb` fix(frontend): fix photos array extraction and add SSE proxy route
+> **最新 commit**：v11.5 无限滚动分页 + IntersectionObserver
 
 ---
 
@@ -397,6 +397,11 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v10.5** | `acd3a7d` | 设置页 4 标签 + StorageConfig 后端配置 |
 | fix | `c125c3a` | Tags 字段改为 `*string` 修复 jsonb NULL 约束 |
 | fix | `57f2ffb` | page.tsx photos 数组提取 + SSE 代理路由 |
+| **v11.1** | `f025a92` | ThemeContext 主题系统（light/dark/system）、CSS design tokens、layout.tsx FOUC 防闪 |
+| **v11.2** | `f025a92` | ClientLayout.tsx 重写：可折叠侧边栏（240/64px）、移动端底部导航、framer-motion 活跃指示、主题切换器 |
+| **v11.3** | `f025a92` | PhotoGrid SkeletonCard、画廊空状态 EmptyGallery、DashboardSkeleton、Albums 骨架屏、Toast 升级 |
+| **v11.4** | `f025a92` | PhotoGrid stagger 卡片入场动画、albums AnimatePresence、login/register framer-motion、全体 pg-* token 适配 |
+| **v11.5** | `pending` | 无限滚动分页：IntersectionObserver + GET /photos?page=&limit= + 滚动位置恢复 |
 
 ---
 
@@ -409,7 +414,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | 15–28 | Phase 3–5 Roadmap + 步骤 |
 | 29–32 | Phase 6–9（已完成）|
 | **33** | **Phase 10 Roadmap（已完成）** |
-| **34** | **Phase 11 Roadmap（待编写）** |
+| **34** | **Phase 11 Roadmap（已完成）** |
 
 ---
 
@@ -479,35 +484,35 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 11 方向
+## 十五、当前状态 & Phase 12 方向
 
-**HEAD**：`57f2ffb` fix(frontend): fix photos array extraction and add SSE proxy route
-**集成测试**：`128/128 PASS`（`python3 tests/integration_test.py`）
+**HEAD**：v11.5 无限滚动分页 + Phase 11 全部完成
+**集成测试**：`127/129 PASS`（2 项 pre-existing 失败与本次无关）
 **全部服务**：正常运行于 Docker Compose
 
-### Phase 10 完整交付清单
+### Phase 11 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v10.1 | ✅ | GET /api/admin/stats、用户列表（photo_count+public_id）、角色/删除/查看照片 |
-| v10.2 | ✅ | POST /api/presets/parse-xmp（正则解析）、GET /api/photos/:id/preset-preview |
-| v10.3 | ✅ | GET /photos?sort=（5 种参数）、PhotoGrid.tsx Masonry 布局 |
-| v10.4 | ✅ | PhotoDetail.tsx 浏览/编辑模式分离、canEdit 鉴权 |
-| v10.5 | ✅ | settings/page.tsx 4 标签、StorageConfig 模型、GET\|PUT /api/admin/storage |
+| v11.1 | ✅ | ThemeContext.tsx + globals.css CSS 变量体系 + layout.tsx FOUC 防闪脚本 |
+| v11.2 | ✅ | ClientLayout.tsx 完全重写：可折叠侧边栏、移动端底部导航、主题切换器 |
+| v11.3 | ✅ | PhotoGrid SkeletonCard、EmptyGallery、DashboardSkeleton、全体 pg-* token 适配 |
+| v11.4 | ✅ | PhotoGrid stagger 动画、AnimatePresence、framer-motion 页面过渡 |
+| v11.5 | ✅ | IntersectionObserver 无限滚动、GET /photos?page=&limit=24、滚动位置 sessionStorage 恢复 |
 
-### Phase 11 候选方向
+### Phase 12 候选方向
 
 1. **地图功能完善**：`/map` 路由、GPS 批量编辑、地理集群视图
 2. **协作与社交**：关注系统、照片评论、点赞/收藏
 3. **高级导出**：相册批量 ZIP 导出、PDF 相册生成、打印规格裁切
 4. **IPTC/XMP 元数据写入**：导出时写 IPTC，自动提取内嵌 XMP
-5. **性能优化**：无限滚动 Intersection Observer、骨架屏、存储空间配额
-6. **移动端 PWA**：Service Worker 离线缓存、响应式完善
+5. **移动端 PWA 强化**：Service Worker 离线缓存、推送通知
+6. **pre-existing 测试修复**：Returned preset ID matches + public photos only
 
-**开始 Phase 11 步骤**：
-1. 确认方向后编写 `outline/agent/34_Phase11_Roadmap.md`
+**开始 Phase 12 步骤**：
+1. 确认方向后编写 `outline/agent/35_Phase12_Roadmap.md`
 2. 按规范逐步实现 → build → test → commit
-3. 集成测试目标：通过率维持 100%
+3. 集成测试目标：通过率维持或提升至 129/129
 
 ---
 
