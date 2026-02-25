@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-25（Phase 13 完成）
-> **当前已交付至**：v13.5（Phase 13 IPTC/XMP 元数据写入）
-> **下一步工作**：Phase 14（相册 ZIP + PDF + 打印规格裁切）
+> **本文最后更新**：2026-02-25（Phase 14 完成）
+> **当前已交付至**：v14.6（Phase 14 相册 ZIP/PDF 导出 + 冲印规格裁切）
+> **下一步工作**：Phase 15（待定）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`ea91f92` feat: Phase 13 — IPTC/XMP metadata (v13.1–v13.5)
+> **最新 commit**：`3f091da` feat: Phase 14 — album ZIP+PDF export + print spec crop (v14.1-v14.6)
 
 ---
 
@@ -379,6 +379,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **events/stream** | **SSE 流式代理**（流式转发，不缓冲）|
 | image | MinIO presigned URL 代理 |
 | photos/[id]/iptc | GET/PUT IPTC 元数据代理（Phase 13）|
+| albums/[id]/export | POST 创建相册导出任务 / GET 导出历史（Phase 14）|
 
 ---
 
@@ -413,6 +414,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v12.1** | `8d9c02e` | 修复 2 项 pre-existing 测试失败 → **129/129**（preset ID 顶层暴露 + PublicPhoto is_public 字段）|
 | **v12.2–12.4** | `a41027b` | profile/map/compare 三页全面 pg-* 主题适配 |
 | **v13.1–13.5** | `ea91f92` | IPTC/XMP 元数据：模型扩展 + API 3 端点 + Worker XMP 提取/IPTC 写入 + IPTCPanel 前端组件 |
+| **v14.1–14.6** | `3f091da` | 相册批量导出：ExportJob 扩展 + 3 个相册端点 + Worker ZIP/PDF + 冲印裁切 + 前端导出面板 |
 
 ---
 
@@ -428,7 +430,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **34** | **Phase 11 Roadmap（已完成）** |
 | **35** | **Phase 12 Roadmap（已完成）** |
 | **36** | **Phase 13 Roadmap（已完成）** |
-| **37** | **Phase 14 Roadmap（进行中）** |
+| **37** | **Phase 14 Roadmap（已完成）** |
 
 ---
 
@@ -498,9 +500,9 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 14 方向
+## 十五、当前状态 & Phase 15 方向
 
-**HEAD**：`ea91f92` Phase 13 IPTC/XMP 元数据写入（v13.1–v13.5）
+**HEAD**：`3f091da` Phase 14 相册批量导出（v14.1-v14.6）
 **集成测试**：**`129/129 PASS`** ✅
 **全部服务**：正常运行于 Docker Compose
 
@@ -511,30 +513,29 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 | Phase 12 v12.1 | `8d9c02e` | ✅ | 修复 preset ID + PublicPhoto is_public → **129/129** |
 | Phase 12 v12.2–12.4 | `a41027b` | ✅ | /profile, /map, /compare pg-* 主题适配 |
 | Phase 13 v13.1–13.5 | `ea91f92` | ✅ | ExifData Copyright/Creator + API + Worker XMP/IPTC + IPTCPanel |
+| Phase 14 v14.1–14.6 | `3f091da` | ✅ | ExportJob 扩展 + 相册 ZIP/PDF 导出 + 冲印规格裁切 + 前端导出面板 |
 
-### Phase 13 完整交付清单
+### Phase 14 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v13.1 | ✅ | models.go Copyright/Creator + GET/PUT /api/photos/:id/iptc + GET /internal/.../iptc + Next.js 代理 |
-| v13.2 | ✅ | process_image() XMP 正则扫描 dc:rights / dc:creator → exif_data |
-| v13.3 | ✅ | process_export_task() 拉取 IPTC → piexif IFD0 注入 Copyright/Artist/ImageDescription |
-| v13.4 | ✅ | IPTCPanel.tsx 前端组件 + PhotoDetail.tsx editMode 集成 |
-| v13.5 | ✅ | go build 通过 + 129/129 测试 + git commit |
+| v14.1 | ✅ | models.go AlbumID/JobType + queue PublishAlbumExportTask + 3 个相册端点 |
+| v14.2 | ✅ | _PRINT_SPEC_RATIOS + _crop_print_spec() + _download_photo_for_export() |
+| v14.3 | ✅ | _album_to_zip() → export/album-{id}-{job_id}.zip |
+| v14.4 | ✅ | _album_to_pdf()（fpdf2）+ process_album_export() + 主循环 album_export 分发 + fpdf2 依赖 |
+| v14.5 | ✅ | api/albums/[id]/export 代理路由 + 相册页导出面板 + ExportPanel print_spec 选项 |
+| v14.6 | ✅ | go build 通过 + 129/129 测试 + git commit `3f091da` |
 
-### Phase 14 规划（outline/agent/37_Phase14_Roadmap.md）
+### Phase 15 方向（待规划）
 
-| 子版本 | 内容 |
-|--------|------|
-| v14.1 | Go Core：POST /api/albums/:id/export + GET /api/albums/:id/exports + 内部相册照片端点 |
-| v14.2 | Worker：album_export 任务 → ZIP 打包 → MinIO uploads |
-| v14.3 | Worker：PDF 相册生成（fpdf2），含封面、EXIF 页脚、Copyright |
-| v14.4 | Worker + ExportPanel：`print_spec`（4x6/5x7/a4/square）中心裁切辅助函数 |
-| v14.5 | 前端：Albums 页面导出按钮 + ExportPanel 打印规格选项 |
-| v14.6 | 构建/测试/提交 |
+下一 Phase 尚未规划，建议方向包括：
+- 人像识别 / 人脸分组
+- 地图视图增强（聚类热力图）
+- 离线/PWA 能力增强
+- 协作相册（多人上传）
 
-**开始 Phase 14 步骤**：
-1. 阅读 `outline/agent/37_Phase14_Roadmap.md`
+**开始下一 Phase 步骤**：
+1. 在 `outline/agent/` 创建新 Phase Roadmap 文档
 2. 按规范实现 → build → 129/129 test → commit
 3. 完成后更新第十节版本历史和本节
 
