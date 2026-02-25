@@ -28,13 +28,13 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 type Photo struct {
 	gorm.Model
 	UserID           uint
-	OriginalFilename string  `gorm:"not null"`
-	MinioPath        string  `gorm:"not null"`
-	Status           string  `gorm:"default:'processing'"` // processing | completed | failed
+	OriginalFilename string `gorm:"not null"`
+	MinioPath        string `gorm:"not null"`
+	Status           string `gorm:"default:'processing'"` // processing | completed | failed
 	UploadedAt       time.Time
-	IsPublic         bool    `gorm:"default:false"`       // visible on public portfolio page
-	Description      string  `gorm:"type:text"`           // photographer's caption / note
-	Tags             *string `gorm:"type:jsonb"`          // JSON string array e.g. ["portrait","night"]; pointer so zero value is NULL (valid jsonb)
+	IsPublic         bool    `gorm:"default:false"` // visible on public portfolio page
+	Description      string  `gorm:"type:text"`     // photographer's caption / note
+	Tags             *string `gorm:"type:jsonb"`    // JSON string array e.g. ["portrait","night"]; pointer so zero value is NULL (valid jsonb)
 	ExifData         ExifData
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters
@@ -163,6 +163,6 @@ type StorageConfig struct {
 	AccessKey string
 	SecretKey string `gorm:"type:text"`
 	RootPath  string
-	UseSSL    bool   `gorm:"default:true"`
+	UseSSL    bool `gorm:"default:true"`
 	Region    string
 }

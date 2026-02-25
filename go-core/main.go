@@ -685,15 +685,15 @@ func main() {
 		offset := (page - 1) * limit
 
 		// Filter params
-			search := strings.TrimSpace(c.Query("search", ""))
-			statusFilter := strings.TrimSpace(c.Query("status", ""))
-			sortParam := c.Query("sort", "date_desc") // date_desc|date_asc|filename|camera|iso
+		search := strings.TrimSpace(c.Query("search", ""))
+		statusFilter := strings.TrimSpace(c.Query("status", ""))
+		sortParam := c.Query("sort", "date_desc") // date_desc|date_asc|filename|camera|iso
 
-			// Build base query with ownership check
-			base := database.DB.Model(&models.Photo{})
-			if role != "SuperAdmin" {
-				base = base.Where("user_id = ?", uid)
-			}
+		// Build base query with ownership check
+		base := database.DB.Model(&models.Photo{})
+		if role != "SuperAdmin" {
+			base = base.Where("user_id = ?", uid)
+		}
 		if search != "" {
 			base = base.Where("original_filename ILIKE ?", "%"+search+"%")
 		}
@@ -2704,17 +2704,17 @@ func main() {
 			for _, m := range re.FindAllStringSubmatch(string(data), -1) {
 				if v, err2 := strconv.ParseFloat(m[2], 64); err2 == nil {
 					lrMap := map[string]string{
-						"Exposure":      "exposure",
-						"Contrast":      "contrast",
-						"Highlights":    "highlights",
-						"Shadows":       "shadows",
-						"Whites":        "whites",
-						"Blacks":        "blacks",
-						"Clarity":       "clarity",
-						"Vibrance":      "vibrance",
-						"Saturation":    "saturation",
-						"Sharpness":     "sharpness",
-						"LuminanceNR":   "noiseReduction",
+						"Exposure":               "exposure",
+						"Contrast":               "contrast",
+						"Highlights":             "highlights",
+						"Shadows":                "shadows",
+						"Whites":                 "whites",
+						"Blacks":                 "blacks",
+						"Clarity":                "clarity",
+						"Vibrance":               "vibrance",
+						"Saturation":             "saturation",
+						"Sharpness":              "sharpness",
+						"LuminanceNR":            "noiseReduction",
 						"PostCropVignetteAmount": "vignette",
 					}
 					if k, ok := lrMap[m[1]]; ok {
@@ -2725,22 +2725,22 @@ func main() {
 		} else {
 			// Parse XMP/CRS attributes using regex — handles namespace prefixes reliably
 			crsMap := map[string]string{
-				"Exposure2012":            "exposure",
-				"Contrast2012":            "contrast",
-				"Highlights2012":          "highlights",
-				"Shadows2012":             "shadows",
-				"Whites2012":              "whites",
-				"Blacks2012":              "blacks",
-				"Clarity2012":             "clarity",
-				"Vibrance":                "vibrance",
-				"Saturation":              "saturation",
-				"Sharpness":               "sharpness",
-				"LuminanceSmoothing":      "noiseReduction",
-				"VignetteAmount":          "vignette",
-				"Exposure":                "exposure",
-				"Contrast":                "contrast",
-				"Highlights":              "highlights",
-				"Shadows":                 "shadows",
+				"Exposure2012":       "exposure",
+				"Contrast2012":       "contrast",
+				"Highlights2012":     "highlights",
+				"Shadows2012":        "shadows",
+				"Whites2012":         "whites",
+				"Blacks2012":         "blacks",
+				"Clarity2012":        "clarity",
+				"Vibrance":           "vibrance",
+				"Saturation":         "saturation",
+				"Sharpness":          "sharpness",
+				"LuminanceSmoothing": "noiseReduction",
+				"VignetteAmount":     "vignette",
+				"Exposure":           "exposure",
+				"Contrast":           "contrast",
+				"Highlights":         "highlights",
+				"Shadows":            "shadows",
 			}
 			// Match crs:AttrName="value" or crs:AttrName='value' regardless of namespace URI
 			xmpRe := regexp.MustCompile(`(?:crs:)(\w+)=["'](-?[\d.]+)["']`)
