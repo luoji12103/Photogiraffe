@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield,
   CircleCheck, CircleX, KeyRound, Plus, Copy, Check,
-  BarChart2, Trash2, UserCog, ImageIcon, ChevronDown,
+  BarChart2, Trash2, UserCog, ImageIcon, ChevronDown, Gauge,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
@@ -37,7 +37,18 @@ interface StatsData {
   top_users: { username: string; photo_count: number }[];
 }
 
-type Tab = "stats" | "flags" | "users" | "invites";
+type Tab = "stats" | "flags" | "users" | "invites" | "ratelimits";
+
+interface AIRateLimit {
+  ID: number;
+  TargetType: string;
+  TargetUserID: number | null;
+  target_username?: string;
+  Window: string;
+  MaxRequests: number;
+  Enabled: boolean;
+  Note: string;
+}
 
 interface InviteCode {
   ID: number;
@@ -86,6 +97,13 @@ export default function AdminPage() {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
+  // AI Rate Limits state
+  const [rateLimits, setRateLimits] = useState<AIRateLimit[]>([]);
+  const [rlLoading, setRlLoading] = useState(true);
+  const [rlMsg, setRlMsg] = useState("");
+  const [rlForm, setRlForm] = useState({ targetType: "all", targetUserId: "", window: "minute", maxRequests: "10", note: "", enabled: true });
+  const [rlCreating, setRlCreating] = useState(false);
+
   const loadStats = useCallback(() => {
     setStatsLoading(true);
     authFetch("/api/admin/stats")
@@ -118,10 +136,75 @@ export default function AdminPage() {
       .finally(() => setInvitesLoading(false));
   }, [authFetch]);
 
+  const loadRateLimits = useCallback(() => {
+    setRlLoading(true);
+    authFetch("/api/admin/ai-rate-limits")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setRateLimits(Array.isArray(data) ? data : []))
+      .finally(() => setRlLoading(false));
+  }, [authFetch]);
+
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { if (tab === "flags") loadFlags(); }, [tab, loadFlags]);
   useEffect(() => { if (tab === "users") loadUsers(); }, [tab, loadUsers]);
   useEffect(() => { if (tab === "invites") loadInviteCodes(); }, [tab, loadInviteCodes]);
+  useEffect(() => { if (tab === "ratelimits") loadRateLimits(); }, [tab, loadRateLimits]);
+
+  const handleCreateRateLimit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rlForm.window || !rlForm.maxRequests) return;
+    setRlCreating(true);
+    setRlMsg("");
+    try {
+      const body: Record<string, unknown> = {
+        target_type: rlForm.targetType,
+        window: rlForm.window,
+        max_requests: parseInt(rlForm.maxRequests),
+        enabled: rlForm.enabled,
+        note: rlForm.note,
+      };
+      if (rlForm.targetType === "user" && rlForm.targetUserId) {
+        body.target_user_id = parseInt(rlForm.targetUserId);
+      }
+      const res = await authFetch("/api/admin/ai-rate-limits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setRlMsg("规则已创建");
+        setTimeout(() => setRlMsg(""), 3000);
+        setRlForm({ targetType: "all", targetUserId: "", window: "minute", maxRequests: "10", note: "", enabled: true });
+        loadRateLimits();
+      } else {
+        const d = await res.json();
+        setRlMsg(d.error || "创建失败");
+      }
+    } finally {
+      setRlCreating(false);
+    }
+  };
+
+  const handleToggleRateLimit = async (rl: AIRateLimit) => {
+    const res = await authFetch(`/api/admin/ai-rate-limits/${rl.ID}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !rl.Enabled }),
+    });
+    if (res.ok) {
+      setRateLimits((prev) => prev.map((r) => r.ID === rl.ID ? { ...r, Enabled: !r.Enabled } : r));
+    }
+  };
+
+  const handleDeleteRateLimit = async (id: number) => {
+    if (!confirm("确定删除该限速规则？")) return;
+    const res = await authFetch(`/api/admin/ai-rate-limits/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setRateLimits((prev) => prev.filter((r) => r.ID !== id));
+      setRlMsg("规则已删除");
+      setTimeout(() => setRlMsg(""), 3000);
+    }
+  };
 
   const handleCreateInvite = async () => {
     setCreatingInvite(true);
@@ -202,6 +285,7 @@ export default function AdminPage() {
     { key: "flags", label: "功能开关", icon: <ToggleRight size={16} /> },
     { key: "users", label: "用户管理", icon: <Users size={16} /> },
     { key: "invites", label: "邀请码", icon: <KeyRound size={16} /> },
+    { key: "ratelimits", label: "AI 限速", icon: <Gauge size={16} /> },
   ];
 
   return (
@@ -516,6 +600,186 @@ export default function AdminPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* AI Rate Limits Tab */}
+          {tab === "ratelimits" && (
+            <div className="space-y-6">
+              {rlMsg && (
+                <div className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-sm">
+                  {rlMsg}
+                </div>
+              )}
+
+              {/* Create rule form */}
+              <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+                <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-4">
+                  添加限速规则
+                </h3>
+                <form onSubmit={handleCreateRateLimit} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* Target type */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-500">生效范围</label>
+                    <select
+                      value={rlForm.targetType}
+                      onChange={(e) => setRlForm((f) => ({ ...f, targetType: e.target.value }))}
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    >
+                      <option value="all">全局（所有用户）</option>
+                      <option value="user">指定用户</option>
+                    </select>
+                  </div>
+                  {/* Target user ID (only when user scope) */}
+                  {rlForm.targetType === "user" && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-zinc-500">用户 ID</label>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="用户数字 ID"
+                        value={rlForm.targetUserId}
+                        onChange={(e) => setRlForm((f) => ({ ...f, targetUserId: e.target.value }))}
+                        required
+                        className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                      />
+                    </div>
+                  )}
+                  {/* Window */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-500">时间窗口</label>
+                    <select
+                      value={rlForm.window}
+                      onChange={(e) => setRlForm((f) => ({ ...f, window: e.target.value }))}
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    >
+                      <option value="second">每秒</option>
+                      <option value="minute">每分钟</option>
+                      <option value="hour">每小时</option>
+                      <option value="day">每天</option>
+                      <option value="week">每周</option>
+                      <option value="month">每月</option>
+                    </select>
+                  </div>
+                  {/* Max requests */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-500">最大次数</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="如：10"
+                      value={rlForm.maxRequests}
+                      onChange={(e) => setRlForm((f) => ({ ...f, maxRequests: e.target.value }))}
+                      required
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  {/* Note */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-500">备注（可选）</label>
+                    <input
+                      type="text"
+                      placeholder="管理员备注"
+                      value={rlForm.note}
+                      onChange={(e) => setRlForm((f) => ({ ...f, note: e.target.value }))}
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  {/* Enabled + submit */}
+                  <div className="flex items-end gap-3">
+                    <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rlForm.enabled}
+                        onChange={(e) => setRlForm((f) => ({ ...f, enabled: e.target.checked }))}
+                        className="w-4 h-4 rounded accent-blue-500"
+                      />
+                      立即启用
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={rlCreating}
+                      className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {rlCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      添加规则
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Rules list */}
+              {rlLoading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+                </div>
+              ) : rateLimits.length === 0 ? (
+                <div className="text-center py-16 text-zinc-600">
+                  暂无限速规则，添加后对 AI 分析请求生效
+                </div>
+              ) : (
+                <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-800 bg-zinc-950/50">
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">生效范围</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">时间窗口</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">最大次数</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium hidden md:table-cell">备注</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">状态</th>
+                        <th className="text-right px-4 py-3 text-zinc-500 font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rateLimits.map((rl) => {
+                        const windowLabels: Record<string, string> = {
+                          second: "每秒", minute: "每分钟", hour: "每小时",
+                          day: "每天", week: "每周", month: "每月",
+                        };
+                        return (
+                          <tr key={rl.ID} className="border-b border-zinc-800/50 last:border-0">
+                            <td className="px-4 py-3 font-medium">
+                              {rl.TargetType === "all"
+                                ? "全局"
+                                : <span className="text-blue-400">{rl.target_username || `用户 #${rl.TargetUserID}`}</span>}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-400">
+                              {windowLabels[rl.Window] ?? rl.Window}
+                            </td>
+                            <td className="px-4 py-3 font-mono tabular-nums">
+                              {rl.MaxRequests} 次
+                            </td>
+                            <td className="px-4 py-3 text-zinc-500 hidden md:table-cell truncate max-w-[160px]">
+                              {rl.Note || "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                onClick={() => handleToggleRateLimit(rl)}
+                                className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${
+                                  rl.Enabled
+                                    ? "bg-green-900/30 text-green-400 border border-green-800/40 hover:bg-red-900/30 hover:text-red-400 hover:border-red-800/40"
+                                    : "bg-zinc-800 text-zinc-500 border border-zinc-700 hover:bg-green-900/30 hover:text-green-400 hover:border-green-800/40"
+                                }`}
+                              >
+                                {rl.Enabled ? "已启用" : "已禁用"}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                onClick={() => handleDeleteRateLimit(rl.ID)}
+                                className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors"
+                                title="删除规则"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

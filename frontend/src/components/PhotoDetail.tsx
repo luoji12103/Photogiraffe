@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -155,6 +155,9 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
     setAnalysisError("");
+    // Capture current analysis so we can detect when a *new* result arrives
+    // (needed for re-analysis, where AIAnalysis is already non-null).
+    const previousAnalysis = photo.AIAnalysis ?? null;
     try {
       const res = await authFetch(`/api/photos/${photo.ID}/analyze`, {
         method: "POST",
@@ -170,7 +173,11 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
         const checkRes = await authFetch(`/api/photos/${photo.ID}`);
         if (checkRes.ok) {
           const updatedPhoto = await checkRes.json();
-          if (updatedPhoto.AIAnalysis) {
+          // Accept the result when AIAnalysis is present AND different
+          // from what we had before (handles both first-run and re-analysis).
+          const hasNew = updatedPhoto.AIAnalysis &&
+            updatedPhoto.AIAnalysis !== previousAnalysis;
+          if (hasNew) {
             setPhoto(updatedPhoto);
             setIsAnalyzing(false);
             clearInterval(pollInterval);
@@ -178,9 +185,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
         }
       }, 3000);
       
-      // Timeout after 60 seconds.
-      // B5 fix: use functional setState to read the *current* value of
-      // isAnalyzing instead of the stale closure value (which is always false).
+      // Timeout after 120 seconds.
       setTimeout(() => {
         clearInterval(pollInterval);
         setIsAnalyzing((wasAnalyzing) => {
@@ -190,7 +195,7 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
           }
           return wasAnalyzing;
         });
-      }, 60000);
+      }, 120000);
       
     } catch (error: any) {
       setAnalysisError(error.message);
@@ -469,6 +474,16 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                   className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-md transition-colors"
                 >
                   Analyze Photo
+                </button>
+              )}
+              {aiAnalysis && !isAnalyzing && (
+                <button
+                  onClick={handleAnalyze}
+                  title="重新分析"
+                  className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded transition-colors hover:bg-zinc-800"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  重新分析
                 </button>
               )}
             </div>

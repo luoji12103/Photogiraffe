@@ -132,6 +132,80 @@ func userIDFromLocals(c *fiber.Ctx) uint {
 	return 0
 }
 
+// ── AI Rate-Limit helpers ────────────────────────────────────────────────────
+
+// aiRatePeriodKey returns a stable string key for the current time window so
+// that consecutive calls within the same window share the same Redis counter.
+func aiRatePeriodKey(window string) string {
+	now := time.Now()
+	switch window {
+	case "second":
+		return fmt.Sprintf("%d", now.Unix())
+	case "minute":
+		return fmt.Sprintf("%d", now.Unix()/60)
+	case "hour":
+		return fmt.Sprintf("%d", now.Unix()/3600)
+	case "day":
+		return fmt.Sprintf("%d", now.Unix()/86400)
+	case "week":
+		return fmt.Sprintf("%d", now.Unix()/604800)
+	case "month":
+		return fmt.Sprintf("%d%02d", now.Year(), int(now.Month()))
+	default:
+		return fmt.Sprintf("%d", now.Unix()/60)
+	}
+}
+
+// aiRateTTL returns a Redis key TTL (2× the window) for safe expiry.
+func aiRateTTL(window string) time.Duration {
+	switch window {
+	case "second":
+		return 2 * time.Second
+	case "minute":
+		return 2 * time.Minute
+	case "hour":
+		return 2 * time.Hour
+	case "day":
+		return 48 * time.Hour
+	case "week":
+		return 14 * 24 * time.Hour
+	case "month":
+		return 62 * 24 * time.Hour
+	default:
+		return 2 * time.Minute
+	}
+}
+
+// checkAIRateLimit fetches all enabled AIRateLimit rules applicable to uid
+// (user-specific first, then global) and enforces them via Redis INCR.
+// Returns a non-nil error if any limit is exceeded; fails open on Redis errors.
+func checkAIRateLimit(uid uint) error {
+	var limits []models.AIRateLimit
+	database.DB.Where(
+		"enabled = true AND (target_type = 'all' OR (target_type = 'user' AND target_user_id = ?))",
+		uid,
+	).Find(&limits)
+
+	for _, limit := range limits {
+		periodKey := aiRatePeriodKey(limit.Window)
+		redisKey := fmt.Sprintf("ai_rl:%s:%d:%s", limit.Window, uid, periodKey)
+
+		count, err := queue.RedisClient.Incr(queue.Ctx, redisKey).Result()
+		if err != nil {
+			log.Printf("[ai_rate_limit] Redis INCR error for key %s: %v", redisKey, err)
+			continue // fail open on Redis errors
+		}
+		if count == 1 {
+			queue.RedisClient.Expire(queue.Ctx, redisKey, aiRateTTL(limit.Window))
+		}
+		if count > int64(limit.MaxRequests) {
+			queue.RedisClient.Decr(queue.Ctx, redisKey) // roll back — request rejected
+			return fmt.Errorf("频率限制：每 %s 最多 %d 次 AI 分析请求", limit.Window, limit.MaxRequests)
+		}
+	}
+	return nil
+}
+
 // publicIDFromLocals extracts the authenticated user's public UUID from Fiber locals.
 func publicIDFromLocals(c *fiber.Ctx) string {
 	if v, ok := c.Locals("userPublicID").(string); ok {
@@ -828,6 +902,11 @@ func main() {
 		configResult := database.DB.First(&config)
 		if configResult.Error != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "AI Configuration not found. Please configure AI settings first."})
+		}
+
+		// Check AI rate limits (admin-configurable per-user / global limits)
+		if err := checkAIRateLimit(uid); err != nil {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		// Push task to Redis Queue
@@ -1964,6 +2043,127 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Invite code not found"})
 		}
 		return c.JSON(fiber.Map{"message": "Invite code deleted"})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 18 — Admin AI Rate-Limit Management
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// GET /api/admin/ai-rate-limits — list all rules with username annotation
+	app.Get("/api/admin/ai-rate-limits", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var limits []models.AIRateLimit
+		database.DB.Find(&limits)
+
+		type RateLimitDTO struct {
+			models.AIRateLimit
+			TargetUsername string `json:"target_username,omitempty"`
+		}
+		result := make([]RateLimitDTO, 0, len(limits))
+		for _, l := range limits {
+			dto := RateLimitDTO{AIRateLimit: l}
+			if l.TargetUserID != nil {
+				var u models.User
+				if database.DB.First(&u, l.TargetUserID).Error == nil {
+					dto.TargetUsername = u.Username
+				}
+			}
+			result = append(result, dto)
+		}
+		return c.JSON(result)
+	})
+
+	// POST /api/admin/ai-rate-limits — create a new rule
+	app.Post("/api/admin/ai-rate-limits", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var input struct {
+			TargetType   string `json:"target_type"`
+			TargetUserID *uint  `json:"target_user_id"`
+			Window       string `json:"window"`
+			MaxRequests  int    `json:"max_requests"`
+			Enabled      bool   `json:"enabled"`
+			Note         string `json:"note"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		validWindows := map[string]bool{"second": true, "minute": true, "hour": true, "day": true, "week": true, "month": true}
+		if !validWindows[input.Window] {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "window must be one of: second, minute, hour, day, week, month"})
+		}
+		if input.MaxRequests <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "max_requests must be > 0"})
+		}
+		targetType := input.TargetType
+		if targetType == "" {
+			targetType = "all"
+		}
+		limit := models.AIRateLimit{
+			TargetType:   targetType,
+			TargetUserID: input.TargetUserID,
+			Window:       input.Window,
+			MaxRequests:  input.MaxRequests,
+			Enabled:      input.Enabled,
+			Note:         input.Note,
+		}
+		if err := database.DB.Create(&limit).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rate limit"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(limit)
+	})
+
+	// PUT /api/admin/ai-rate-limits/:id — update an existing rule
+	app.Put("/api/admin/ai-rate-limits/:id", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var limit models.AIRateLimit
+		if database.DB.First(&limit, id).Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Rate limit rule not found"})
+		}
+		var input struct {
+			TargetType   *string `json:"target_type"`
+			TargetUserID *uint   `json:"target_user_id"`
+			Window       *string `json:"window"`
+			MaxRequests  *int    `json:"max_requests"`
+			Enabled      *bool   `json:"enabled"`
+			Note         *string `json:"note"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		updates := map[string]interface{}{}
+		if input.TargetType != nil {
+			updates["target_type"] = *input.TargetType
+		}
+		if input.TargetUserID != nil {
+			updates["target_user_id"] = *input.TargetUserID
+		}
+		if input.Window != nil {
+			validWindows := map[string]bool{"second": true, "minute": true, "hour": true, "day": true, "week": true, "month": true}
+			if !validWindows[*input.Window] {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "window must be one of: second, minute, hour, day, week, month"})
+			}
+			updates["window"] = *input.Window
+		}
+		if input.MaxRequests != nil {
+			updates["max_requests"] = *input.MaxRequests
+		}
+		if input.Enabled != nil {
+			updates["enabled"] = *input.Enabled
+		}
+		if input.Note != nil {
+			updates["note"] = *input.Note
+		}
+		database.DB.Model(&limit).Updates(updates)
+		database.DB.First(&limit, id)
+		return c.JSON(limit)
+	})
+
+	// DELETE /api/admin/ai-rate-limits/:id — delete a rule
+	app.Delete("/api/admin/ai-rate-limits/:id", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		result := database.DB.Delete(&models.AIRateLimit{}, id)
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Rate limit rule not found"})
+		}
+		return c.JSON(fiber.Map{"message": "Rate limit rule deleted"})
 	})
 
 	// POST /api/photos/batch-delete — delete multiple photos by ID

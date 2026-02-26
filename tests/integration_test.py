@@ -836,6 +836,7 @@ def main():
     test_security(token)
     test_phase16(token)
     test_phase17(token)
+    test_phase18(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -850,6 +851,48 @@ def main():
     print(f"{'═'*60}\n")
 
     sys.exit(0 if not failures else 1)
+
+
+def test_phase18(token):
+    section("v18.1–v18.3  Admin AI Rate Limiting")
+
+    # ── GET without admin token → 401 ──
+    _, status, _ = http("GET", "/api/admin/ai-rate-limits")
+    check("GET /api/admin/ai-rate-limits without token → 401", status == 401, f"status={status}")
+
+    # ── GET with admin token → 200 ──
+    d, status, _ = http("GET", "/api/admin/ai-rate-limits", token=token)
+    check("GET /api/admin/ai-rate-limits 200", status == 200, f"status={status}")
+    check("  response is a list",
+          isinstance(d, list), d)
+
+    # ── POST create a rule ──
+    body = {"target_type": "all", "window": "minute", "max_requests": 50, "enabled": True, "note": "test rule"}
+    d, status, _ = http("POST", "/api/admin/ai-rate-limits", token=token, body=body)
+    check("POST /api/admin/ai-rate-limits 201", status == 201, f"status={status}")
+    rule_id = d.get("ID") or d.get("id") if isinstance(d, dict) else None
+    check("  response has ID", rule_id is not None, d)
+
+    # ── POST invalid window → 400 ──
+    _, status, _ = http("POST", "/api/admin/ai-rate-limits", token=token,
+                        body={"target_type": "all", "window": "invalid", "max_requests": 10})
+    check("POST /api/admin/ai-rate-limits invalid window → 400", status == 400, f"status={status}")
+
+    # ── PUT toggle ──
+    if rule_id:
+        d, status, _ = http("PUT", f"/api/admin/ai-rate-limits/{rule_id}", token=token,
+                            body={"enabled": False})
+        check(f"PUT /api/admin/ai-rate-limits/{rule_id} 200", status == 200, f"status={status}")
+
+    # ── DELETE the rule ──
+    if rule_id:
+        _, status, _ = http("DELETE", f"/api/admin/ai-rate-limits/{rule_id}", token=token)
+        check(f"DELETE /api/admin/ai-rate-limits/{rule_id} 200", status == 200, f"status={status}")
+
+    # ── Verify deleted ──
+    d, status, _ = http("GET", "/api/admin/ai-rate-limits", token=token)
+    ids = [r.get("ID") or r.get("id") for r in (d if isinstance(d, list) else [])]
+    check("  deleted rule no longer in list", rule_id not in ids, ids)
 
 
 if __name__ == "__main__":

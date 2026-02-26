@@ -43,6 +43,19 @@ type Photo struct {
 	PHash            *string `gorm:"type:varchar(16)"` // nullable; 64-bit perceptual hash as 16-char hex, computed by worker
 }
 
+// AIRateLimit configures call-rate limits for the AI analysis endpoint.
+// TargetType="user" applies to a single user (TargetUserID set);
+// TargetType="all"  applies globally to every authenticated user.
+type AIRateLimit struct {
+	gorm.Model
+	TargetType   string `gorm:"not null;default:'all'"`  // "user" | "all"
+	TargetUserID *uint  // nil when TargetType="all"
+	Window       string `gorm:"not null"`               // "second" | "minute" | "hour" | "day" | "week" | "month"
+	MaxRequests  int    `gorm:"not null;default:10"`
+	Enabled      bool   `gorm:"default:true"`
+	Note         string // optional admin-visible note
+}
+
 type ExifData struct {
 	gorm.Model
 	PhotoID          uint
