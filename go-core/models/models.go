@@ -39,7 +39,8 @@ type Photo struct {
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters
 	AppliedPresetID  *uint   // nullable; last preset explicitly applied
-	DominantColors   *string `gorm:"type:jsonb"` // nullable; [{hex,bucket,pct},...] extracted by worker
+	DominantColors   *string `gorm:"type:jsonb"`    // nullable; [{hex,bucket,pct},...] extracted by worker
+	PHash            *string `gorm:"type:varchar(16)"` // nullable; 64-bit perceptual hash as 16-char hex, computed by worker
 }
 
 type ExifData struct {

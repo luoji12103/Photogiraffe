@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -970,6 +971,100 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save dominant colors"})
 		}
 		return c.JSON(fiber.Map{"message": "Dominant colors saved"})
+	})
+
+	// PUT /internal/photos/:id/phash — Worker writes back perceptual hash (Phase 17)
+	app.Put("/internal/photos/:id/phash", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var input struct {
+			PHash string `json:"phash"` // 16-char hex string (64-bit pHash)
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		if len(input.PHash) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "phash is required"})
+		}
+		if result := database.DB.Model(&models.Photo{}).Where("id = ?", id).
+			Update("p_hash", &input.PHash); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save pHash"})
+		}
+		log.Printf("[pHash] saved phash=%s for photo id=%s", input.PHash, id)
+		return c.JSON(fiber.Map{"message": "pHash saved"})
+	})
+
+	// GET /api/photos/duplicates — Return groups of near-duplicate photos (Hamming dist ≤ 10) (Phase 17)
+	app.Get("/api/photos/duplicates", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+
+		// Fetch all photos for this user that have a pHash
+		var photos []models.Photo
+		database.DB.Where("user_id = ? AND p_hash IS NOT NULL", uid).
+			Select("id, original_filename, minio_path, uploaded_at, p_hash, file_size").
+			Find(&photos)
+
+		// Parse hex strings to uint64
+		type photoHash struct {
+			photo models.Photo
+			hash  uint64
+		}
+		var items []photoHash
+		for _, p := range photos {
+			if p.PHash == nil {
+				continue
+			}
+			val, err := strconv.ParseUint(*p.PHash, 16, 64)
+			if err != nil {
+				log.Printf("[pHash] failed to parse hash '%s' for photo %d: %v", *p.PHash, p.ID, err)
+				continue
+			}
+			items = append(items, photoHash{p, val})
+		}
+
+		// Union-Find: group images with Hamming distance ≤ 10
+		parent := make(map[uint]uint)
+		for _, item := range items {
+			parent[item.photo.ID] = item.photo.ID
+		}
+		var find func(uint) uint
+		find = func(x uint) uint {
+			if parent[x] != x {
+				parent[x] = find(parent[x])
+			}
+			return parent[x]
+		}
+		for i := 0; i < len(items); i++ {
+			for j := i + 1; j < len(items); j++ {
+				dist := bits.OnesCount64(items[i].hash ^ items[j].hash)
+				if dist <= 10 {
+					rx, ry := find(items[i].photo.ID), find(items[j].photo.ID)
+					if rx != ry {
+						parent[ry] = rx
+					}
+				}
+			}
+		}
+
+		// Collect groups of size ≥ 2
+		groups := make(map[uint][]models.Photo)
+		for _, item := range items {
+			root := find(item.photo.ID)
+			groups[root] = append(groups[root], item.photo)
+		}
+		type dupGroup struct {
+			Photos []models.Photo `json:"photos"`
+		}
+		var result []dupGroup
+		for _, gp := range groups {
+			if len(gp) >= 2 {
+				result = append(result, dupGroup{Photos: gp})
+			}
+		}
+		if result == nil {
+			result = []dupGroup{}
+		}
+		log.Printf("[pHash] duplicates query: user=%d photos_with_hash=%d groups=%d", uid, len(items), len(result))
+		return c.JSON(fiber.Map{"groups": result, "total_groups": len(result)})
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────

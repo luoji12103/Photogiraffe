@@ -13,3 +13,4 @@ anthropic
 opencv-python-headless
 zhipuai
 fpdf2
+imagehash

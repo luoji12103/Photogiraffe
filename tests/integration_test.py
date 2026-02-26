@@ -758,6 +758,62 @@ def test_phase16(token):
           dc_status == 200, f"status={dc_status}")
 
 
+# ─────────────────────────────────────────────────────────────────
+
+def test_phase17(token):
+    section("v17.1–v17.4  Perceptual Hash Deduplication (pHash)")
+
+    # ── GET /api/photos/duplicates requires auth ──
+    _, status, _ = http("GET", "/api/photos/duplicates")
+    check("GET /api/photos/duplicates without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/photos/duplicates returns groups array ──
+    d, status, _ = http("GET", "/api/photos/duplicates", token=token)
+    check("GET /api/photos/duplicates 200", status == 200, f"status={status}")
+    check("  response has groups list",
+          isinstance(d, dict) and isinstance(d.get("groups"), list), d)
+    check("  response has total_groups int",
+          isinstance(d, dict) and isinstance(d.get("total_groups"), int), d)
+
+    # ── internal phash endpoint: requires X-Internal-Secret ──
+    internal_secret = os.getenv("INTERNAL_SECRET", "")
+    if not internal_secret:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+        try:
+            with open(env_path) as _ef:
+                for _line in _ef:
+                    if _line.startswith("INTERNAL_SECRET="):
+                        internal_secret = _line.split("=", 1)[1].strip()
+                        break
+        except FileNotFoundError:
+            pass
+
+    # Without secret → 403
+    _, status, _ = http("PUT", "/internal/photos/1/phash",
+                        body={"phash": "a1b2c3d4e5f60718"})
+    check("PUT /internal/photos/:id/phash without secret → 403",
+          status == 403, f"status={status}")
+
+    # With secret, non-existent photo ID → 200 (GORM updates 0 rows without error)
+    try:
+        payload = json.dumps({"phash": "a1b2c3d4e5f60718"}).encode()
+        req = urllib.request.Request(
+            f"{BASE_URL}/internal/photos/999999/phash",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Internal-Secret": internal_secret},
+            method="PUT",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            ph_status = 200
+        except urllib.error.HTTPError as e:
+            ph_status = e.code
+    except Exception as e:
+        ph_status = 0
+    check("PUT /internal/photos/999999/phash with secret → 200 (0 rows updated OK)",
+          ph_status == 200, f"status={ph_status}")
+
+
 def main():
     print("\n\033[1;36m  Photogiraffe Integration Test Suite\033[0m")
     print(f"  Target: {BASE_URL}")
@@ -779,6 +835,7 @@ def main():
     test_phase10(token)
     test_security(token)
     test_phase16(token)
+    test_phase17(token)
 
     # Summary
     total = len(passes) + len(failures)
