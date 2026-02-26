@@ -89,6 +89,92 @@ def convert_to_srgb(img: 'Image.Image') -> 'Image.Image':
         logger.warning(f"ICC color conversion failed ({e}); using fallback convert()")
         return img.convert("RGB")
 
+# ─── Phase 16 — Dominant colour extraction ────────────────────────────────────
+
+def _color_bucket(r: int, g: int, b: int) -> str:
+    """Map an RGB colour to a named bucket: red/orange/yellow/green/teal/blue/purple/pink/white/gray/black."""
+    # Normalise to 0-1
+    rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+    cmax, cmin = max(rf, gf, bf), min(rf, gf, bf)
+    delta = cmax - cmin
+    l_val = (cmax + cmin) / 2.0  # lightness
+
+    # Achromatic check (saturation very low)
+    s_val = 0.0 if delta == 0 else delta / (1 - abs(2 * l_val - 1))
+    if s_val < 0.15:
+        if l_val >= 0.80:
+            return "white"
+        if l_val <= 0.25:
+            return "black"
+        return "gray"
+
+    # Compute hue (0-360)
+    if delta == 0:
+        h = 0.0
+    elif cmax == rf:
+        h = 60 * (((gf - bf) / delta) % 6)
+    elif cmax == gf:
+        h = 60 * (((bf - rf) / delta) + 2)
+    else:
+        h = 60 * (((rf - gf) / delta) + 4)
+
+    if h < 0:
+        h += 360
+
+    # Hue-to-bucket mapping
+    if h < 20 or h >= 340:
+        return "red"
+    if h < 45:
+        return "orange"
+    if h < 70:
+        return "yellow"
+    if h < 160:
+        return "green"
+    if h < 200:
+        return "teal"
+    if h < 250:
+        return "blue"
+    if h < 290:
+        return "purple"
+    return "pink"
+
+
+def _extract_dominant_colors(img: Image.Image, n_colors: int = 5) -> list:
+    """
+    Extract the top `n_colors` dominant colours using PIL's quantize (fast k-means).
+    Returns [{hex, bucket, pct}, ...] sorted by descending coverage percentage.
+    """
+    try:
+        small = img.copy().convert("RGB")
+        small.thumbnail((150, 150), Image.Resampling.LANCZOS)
+
+        quantized = small.quantize(colors=n_colors, method=Image.Quantize.FASTOCTREE, dither=0)
+        palette_bytes = quantized.getpalette()  # flat [r,g,b, r,g,b, ...]
+
+        np_arr = np.array(quantized)
+        total_px = np_arr.size
+
+        results = []
+        for i in range(n_colors):
+            count = int(np.sum(np_arr == i))
+            if count == 0:
+                continue
+            r_c = palette_bytes[i * 3]
+            g_c = palette_bytes[i * 3 + 1]
+            b_c = palette_bytes[i * 3 + 2]
+            results.append({
+                "hex":    f"#{r_c:02x}{g_c:02x}{b_c:02x}",
+                "bucket": _color_bucket(r_c, g_c, b_c),
+                "pct":    round(count / total_px * 100, 1),
+            })
+
+        results.sort(key=lambda x: -x["pct"])
+        return results
+    except Exception as ex:
+        logger.debug(f"[colors] extraction failed: {ex}")
+        return []
+
+
 # Environment variables
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redispass")
@@ -306,6 +392,18 @@ def process_image(minio_client, photo_id, minio_path):
             payload["exif_data"] = exif_data
         res = requests.put(update_url, json=payload, headers={"X-Internal-Secret": INTERNAL_SECRET})
         res.raise_for_status()
+
+        # 5. Phase 16 — Extract dominant colours from thumbnail and push to Go Core
+        try:
+            colors = _extract_dominant_colors(thumb_img)
+            if colors:
+                colors_json = json.dumps(colors)
+                dc_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/dominant-colors"
+                requests.put(dc_url, json={"dominant_colors": colors_json},
+                             headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=8)
+                logger.info(f"[colors] photo {photo_id} → {[c['bucket'] for c in colors]}")
+        except Exception as ce:
+            logger.debug(f"[colors] push failed (non-fatal): {ce}")
 
         logger.info(f"Successfully processed photo {photo_id}")
         return True

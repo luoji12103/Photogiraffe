@@ -687,6 +687,7 @@ func main() {
 		// Filter params
 		search := strings.TrimSpace(c.Query("search", ""))
 		statusFilter := strings.TrimSpace(c.Query("status", ""))
+		colorBucket := strings.ToLower(strings.TrimSpace(c.Query("color_bucket", "")))
 		sortParam := c.Query("sort", "date_desc") // date_desc|date_asc|filename|camera|iso
 
 		// Build base query with ownership check
@@ -699,6 +700,10 @@ func main() {
 		}
 		if statusFilter != "" {
 			base = base.Where("status = ?", statusFilter)
+		}
+		if colorBucket != "" {
+			// Match photos where dominant_colors jsonb contains an entry with this bucket
+			base = base.Where("dominant_colors::text ILIKE ?", "%\""+colorBucket+"\"%")
 		}
 
 		// Get total count
@@ -939,6 +944,22 @@ func main() {
 		broadcastToUser(photo.UserID, "infer_params_done", string(payload))
 
 		return c.JSON(fiber.Map{"message": "Inferred parameters saved"})
+	})
+
+	// PUT /internal/photos/:id/dominant-colors — Worker writes back extracted dominant colours (Phase 16)
+	app.Put("/internal/photos/:id/dominant-colors", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var input struct {
+			DominantColors string `json:"dominant_colors"` // JSON array: [{hex,bucket,pct},...]
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		if result := database.DB.Model(&models.Photo{}).Where("id = ?", id).
+			Update("dominant_colors", &input.DominantColors); result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save dominant colors"})
+		}
+		return c.JSON(fiber.Map{"message": "Dominant colors saved"})
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────

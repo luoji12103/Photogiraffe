@@ -16,10 +16,12 @@ interface Photo {
   MinioPath: string;
   Status: string;
   UploadedAt: string;
+  DominantColors?: string | null;
 }
 
 type SortOption = "date_desc" | "date_asc" | "filename" | "camera" | "iso";
 type LayoutOption = "grid" | "masonry";
+type ColorBucket = "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "white" | "gray" | "black";
 
 const SORT_LABELS: Record<SortOption, string> = {
   date_desc: "最新上传",
@@ -28,6 +30,20 @@ const SORT_LABELS: Record<SortOption, string> = {
   camera:    "相机型号",
   iso:       "ISO 值",
 };
+
+const COLOR_BUCKETS: { key: ColorBucket; hex: string; label: string }[] = [
+  { key: "red",    hex: "#e53e3e", label: "红" },
+  { key: "orange", hex: "#dd6b20", label: "橙" },
+  { key: "yellow", hex: "#d69e2e", label: "黄" },
+  { key: "green",  hex: "#38a169", label: "绿" },
+  { key: "teal",   hex: "#319795", label: "青" },
+  { key: "blue",   hex: "#3182ce", label: "蓝" },
+  { key: "purple", hex: "#805ad5", label: "紫" },
+  { key: "pink",   hex: "#d53f8c", label: "粉" },
+  { key: "white",  hex: "#e2e8f0", label: "白" },
+  { key: "gray",   hex: "#718096", label: "灰" },
+  { key: "black",  hex: "#2d3748", label: "黑" },
+];
 
 /* ── Empty State ── */
 function EmptyGallery({ onUpload }: { onUpload?: () => void }) {
@@ -68,6 +84,7 @@ export default function Home() {
   const [hasMore, setHasMore]         = useState(false);
   const [sort, setSort]             = useState<SortOption>("date_desc");
   const [layout, setLayout]         = useState<LayoutOption>("grid");
+  const [colorBucket, setColorBucket] = useState<ColorBucket | "">("");
 
   // Ref for the IntersectionObserver sentinel
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -76,7 +93,7 @@ export default function Home() {
 
   /* ── Fetch a specific page, optionally appending ── */
   const fetchPage = useCallback(
-    async (page: number, sortParam: SortOption, append: boolean) => {
+    async (page: number, sortParam: SortOption, append: boolean, bucket = "") => {
       if (fetchingRef.current) return;
       fetchingRef.current = true;
 
@@ -84,8 +101,9 @@ export default function Home() {
       else        setLoading(true);
 
       try {
+        const colorParam = bucket ? `&color_bucket=${encodeURIComponent(bucket)}` : "";
         const res = await authFetch(
-          `/api/photos?sort=${sortParam}&page=${page}&limit=${PAGE_LIMIT}`
+          `/api/photos?sort=${sortParam}&page=${page}&limit=${PAGE_LIMIT}${colorParam}`
         );
         if (!res.ok) throw new Error(String(res.status));
         const data = await res.json();
@@ -110,15 +128,15 @@ export default function Home() {
     [authFetch]
   );
 
-  /* ── Initial load / sort change → reset to page 1 ── */
+  /* ── Initial load / sort change / colour filter change → reset to page 1 ── */
   useEffect(() => {
     if (!user) return;
     setPhotos([]);
     setCurrentPage(1);
     setHasMore(false);
-    fetchPage(1, sort, false);
+    fetchPage(1, sort, false, colorBucket);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, sort]);
+  }, [user, sort, colorBucket]);
 
   /* ── Restore scroll position after initial render ── */
   useEffect(() => {
@@ -148,7 +166,7 @@ export default function Home() {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !fetchingRef.current) {
-          fetchPage(currentPage + 1, sort, true);
+          fetchPage(currentPage + 1, sort, true, colorBucket);
         }
       },
       { rootMargin: "200px" } // trigger 200px before bottom
@@ -156,7 +174,7 @@ export default function Home() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, currentPage, sort, fetchPage]);
+  }, [hasMore, currentPage, sort, colorBucket, fetchPage]);
 
   /* ── Layout preference persistence ── */
   useEffect(() => {
@@ -198,8 +216,44 @@ export default function Home() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.1 }}
-        className="flex items-center gap-3 mb-6"
+        className="flex flex-col gap-3 mb-6"
       >
+        {/* Colour bucket filter row */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs shrink-0" style={{ color: "var(--pg-text-muted)" }}>主色调</span>
+          {colorBucket && (
+            <button
+              onClick={() => setColorBucket("")}
+              className="text-xs px-2 py-0.5 rounded-full transition-colors"
+              style={{
+                background: "var(--pg-accent-soft)",
+                color: "var(--pg-accent)",
+                border: "1px solid var(--pg-accent)",
+              }}
+            >
+              × 清除
+            </button>
+          )}
+          {COLOR_BUCKETS.map(({ key, hex, label }) => (
+            <button
+              key={key}
+              title={label}
+              onClick={() => setColorBucket(colorBucket === key ? "" : key)}
+              className="w-6 h-6 rounded-full transition-all duration-200 shrink-0"
+              style={{
+                background: hex,
+                border: colorBucket === key
+                  ? "2.5px solid var(--pg-text-primary)"
+                  : "2px solid var(--pg-border)",
+                transform: colorBucket === key ? "scale(1.25)" : "scale(1)",
+                boxShadow: key === "white" ? "inset 0 0 0 1px var(--pg-border)" : undefined,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Sort + Layout row */}
+        <div className="flex items-center gap-3">
         {/* Sort Selector */}
         <div className="relative">
           <select
@@ -228,7 +282,7 @@ export default function Home() {
           className="flex gap-1 rounded-lg p-1"
           style={{ background: "var(--pg-bg-elevated)", border: "1px solid var(--pg-border)" }}
         >
-          {([
+          {([ 
             { key: "grid"    as LayoutOption, icon: LayoutGrid, label: "网格布局" },
             { key: "masonry" as LayoutOption, icon: Columns,    label: "瀑布流布局" },
           ]).map(({ key, icon: Icon, label }) => (
@@ -247,6 +301,7 @@ export default function Home() {
             </button>
           ))}
         </div>
+        </div>  {/* end Sort+Layout row */}
       </motion.div>
 
       {/* Content */}

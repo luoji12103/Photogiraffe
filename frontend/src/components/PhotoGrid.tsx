@@ -12,6 +12,7 @@ interface Photo {
   MinioPath: string;
   Status: string;
   UploadedAt: string;
+  DominantColors?: string | null; // JSON [{hex,bucket,pct},...]
 }
 
 interface PhotoGridProps {
@@ -137,6 +138,25 @@ function PhotoCard({
         <p className="text-xs text-white/70" suppressHydrationWarning>
           {new Date(photo.UploadedAt).toLocaleDateString()}
         </p>
+        {/* Dominant colour swatches */}
+        {photo.DominantColors && (() => {
+          try {
+            const colors: { hex: string; pct: number }[] = JSON.parse(photo.DominantColors);
+            if (colors.length > 0) return (
+              <div className="flex gap-1 mt-1.5">
+                {colors.slice(0, 5).map((c, i) => (
+                  <span
+                    key={i}
+                    title={`${c.hex} (${c.pct}%)`}
+                    className="w-3.5 h-3.5 rounded-full border border-white/30"
+                    style={{ background: c.hex }}
+                  />
+                ))}
+              </div>
+            );
+          } catch { /* ignore parse errors */ }
+          return null;
+        })()}
       </div>
 
       {/* Selection indicator */}

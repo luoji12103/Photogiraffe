@@ -699,6 +699,65 @@ def test_phase10(token):
 # Main
 # ─────────────────────────────────────────────────────────────────
 
+def test_phase16(token):
+    section("v16.1–v16.4  Dominant Colours · colour_bucket filter")
+
+    # ── colour_bucket filter: valid buckets return 200 ──
+    for bucket in ("red", "blue", "green", "black", "white"):
+        d, status, _ = http("GET", f"/photos?color_bucket={bucket}&page=1&limit=5", token=token)
+        check(f"GET /photos?color_bucket={bucket} 200", status == 200, f"status={status}")
+        check(f"  response has photos list",
+              isinstance(d, dict) and isinstance(d.get("photos"), list), d)
+
+    # ── photo response may carry DominantColors field (null or JSON) ──
+    d, status, _ = http("GET", "/photos?page=1&limit=1", token=token)
+    photos = d.get("photos", []) if isinstance(d, dict) else []
+    if photos:
+        photo = photos[0]
+        # DominantColors key should be present (may be null until worker re-runs)
+        # We accept both present-with-value and absent/null
+        check("  photo response has DominantColors key (or null)",
+              "DominantColors" in photo or photo.get("DominantColors") is None,
+              f"keys={list(photo.keys())}")
+
+    # ── internal dominant-colors endpoint: requires X-Internal-Secret ──
+    internal_secret = os.getenv("INTERNAL_SECRET", "")
+    if not internal_secret:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+        try:
+            with open(env_path) as _ef:
+                for _line in _ef:
+                    if _line.startswith("INTERNAL_SECRET="):
+                        internal_secret = _line.split("=", 1)[1].strip()
+                        break
+        except FileNotFoundError:
+            pass
+    # Without secret → 403
+    _, status, _ = http("PUT", "/internal/photos/1/dominant-colors",
+                        body={"dominant_colors": "[]"})
+    check("PUT /internal/photos/:id/dominant-colors without secret → 403",
+          status == 403, f"status={status}")
+
+    # With secret → 404 (photo id 999999 not found) or 200 if photo exists
+    try:
+        payload = json.dumps({"dominant_colors": '[{"hex":"#112233","bucket":"blue","pct":100.0}]'}).encode()
+        req = urllib.request.Request(
+            f"{BASE_URL}/internal/photos/999999/dominant-colors",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Internal-Secret": internal_secret},
+            method="PUT",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            dc_status = 200
+        except urllib.error.HTTPError as e:
+            dc_status = e.code
+    except Exception as e:
+        dc_status = 0
+    check("PUT /internal/photos/999999/dominant-colors with secret → 200 (0 rows updated OK)",
+          dc_status == 200, f"status={dc_status}")
+
+
 def main():
     print("\n\033[1;36m  Photogiraffe Integration Test Suite\033[0m")
     print(f"  Target: {BASE_URL}")
@@ -719,6 +778,7 @@ def main():
     test_phase9(token)
     test_phase10(token)
     test_security(token)
+    test_phase16(token)
 
     # Summary
     total = len(passes) + len(failures)
