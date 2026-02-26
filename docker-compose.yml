@@ -76,6 +76,8 @@ services:
     depends_on:
       - redis
       - minio
+    volumes:
+      - python-worker-cache:/root/.cache
     restart: unless-stopped
 
   frontend:
@@ -113,3 +115,4 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
+  python-worker-cache:

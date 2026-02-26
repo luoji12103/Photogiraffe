@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw, Tags } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -47,6 +47,7 @@ interface Photo {
   ExifData?: ExifData;
   AIAnalysis?: string | null; // null when AI analysis not yet performed
   InferredParams?: string | null; // null when AI param inference not yet run
+  AutoTags?: string | null; // null when CLIP auto-tag not yet run; JSON array of strings
 }
 
 interface PhotoDetailProps {
@@ -60,6 +61,8 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
   const [analysisError, setAnalysisError] = useState("");
   const [isInferring, setIsInferring] = useState(false);
   const [inferError, setInferError] = useState("");
+  const [isAutoTagging, setIsAutoTagging] = useState(false);
+  const [autoTagError, setAutoTagError] = useState("");
   const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
   const [editMode, setEditMode] = useState(false);
@@ -200,6 +203,40 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
     } catch (error: any) {
       setAnalysisError(error.message);
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleAutoTag = async () => {
+    setIsAutoTagging(true);
+    setAutoTagError("");
+    const previousAutoTags = photo.AutoTags ?? null;
+    try {
+      const res = await authFetch(`/api/photos/${photo.ID}/auto-tag`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to trigger auto-tag");
+      }
+      const pollInterval = setInterval(async () => {
+        const checkRes = await authFetch(`/api/photos/${photo.ID}`);
+        if (checkRes.ok) {
+          const updatedPhoto = await checkRes.json();
+          if (updatedPhoto.AutoTags && updatedPhoto.AutoTags !== previousAutoTags) {
+            setPhoto(updatedPhoto);
+            setIsAutoTagging(false);
+            clearInterval(pollInterval);
+          }
+        }
+      }, 3000);
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setIsAutoTagging((was) => {
+          if (was) setAutoTagError("Auto-tag timed out. Please try again.");
+          return false;
+        });
+      }, 180000);
+    } catch (error: unknown) {
+      setAutoTagError(error instanceof Error ? error.message : "Auto-tag failed");
+      setIsAutoTagging(false);
     }
   };
 
@@ -521,6 +558,52 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* CLIP Auto-Tag Section — Phase 20 */}
+          <div className="space-y-3 mt-6 pt-6 border-t border-zinc-800">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                <Tags className="w-4 h-4 text-emerald-400" />
+                CLIP 自动标签
+              </h3>
+              {!isAutoTagging && photo.Status === "completed" && (
+                <button
+                  onClick={handleAutoTag}
+                  className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-md transition-colors"
+                >
+                  {photo.AutoTags ? "重新标注" : "自动标注"}
+                </button>
+              )}
+            </div>
+            {isAutoTagging && (
+              <div className="flex items-center text-zinc-500 py-2">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <span className="text-sm">CLIP 模型分析中…</span>
+              </div>
+            )}
+            {autoTagError && (
+              <div className="text-sm text-red-400 bg-red-400/10 p-3 rounded-md">{autoTagError}</div>
+            )}
+            {photo.AutoTags && (() => {
+              try {
+                const tags: string[] = JSON.parse(photo.AutoTags);
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-900/40 text-emerald-300 border border-emerald-700/30"
+                      >
+                        ✨ {tag}
+                      </span>
+                    ))}
+                  </div>
+                );
+              } catch {
+                return null;
+              }
+            })()}
           </div>
         </motion.div>
       </div>

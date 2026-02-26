@@ -838,6 +838,7 @@ def main():
     test_phase17(token)
     test_phase18(token)
     test_phase19(token)
+    test_phase20(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -917,6 +918,56 @@ def test_phase19(token):
     # ── DELETE non-existent → 404 ──
     _, status, _ = http("DELETE", "/api/exports/999999", token=token)
     check("DELETE /api/exports/999999 → 404", status == 404, f"status={status}")
+
+
+def test_phase20(token):
+    section("v0.20  CLIP Local Auto-Tag")
+
+    # ── POST /api/photos/:id/auto-tag without token → 401 ──
+    _, status, _ = http("POST", "/api/photos/1/auto-tag")
+    check("POST /api/photos/1/auto-tag without token → 401", status == 401, f"status={status}")
+
+    # ── POST /api/photos/999999/auto-tag → 404 ──
+    _, status, _ = http("POST", "/api/photos/999999/auto-tag", token=token)
+    check("POST /api/photos/999999/auto-tag → 404", status == 404, f"status={status}")
+
+    # ── Resolve internal secret ──
+    internal_secret = os.getenv("INTERNAL_SECRET", "")
+    if not internal_secret:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+        try:
+            with open(env_path) as _ef:
+                for _line in _ef:
+                    if _line.startswith("INTERNAL_SECRET="):
+                        internal_secret = _line.split("=", 1)[1].strip()
+                        break
+        except FileNotFoundError:
+            pass
+
+    # ── PUT /internal/photos/999999/auto-tags without secret → 401 ──
+    _, status, _ = http("PUT", "/internal/photos/999999/auto-tags",
+                        body={"auto_tags": '["landscape"]'})
+    check("PUT /internal/photos/999999/auto-tags without secret → 401/403",
+          status in (401, 403), f"status={status}")
+
+    # ── PUT /internal/photos/999999/auto-tags with secret → 404 (no such photo) ──
+    try:
+        payload = json.dumps({"auto_tags": '["landscape","golden hour"]'}).encode()
+        req = urllib.request.Request(
+            f"{BASE_URL}/internal/photos/999999/auto-tags",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Internal-Secret": internal_secret},
+            method="PUT",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            at_status = 200
+        except urllib.error.HTTPError as e:
+            at_status = e.code
+    except Exception as e:
+        at_status = 0
+    check("PUT /internal/photos/999999/auto-tags with secret → 404 (photo not found)",
+          at_status == 404, f"status={at_status}")
 
 
 if __name__ == "__main__":

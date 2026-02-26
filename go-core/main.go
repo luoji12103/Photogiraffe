@@ -1036,6 +1036,62 @@ func main() {
 		return c.JSON(fiber.Map{"message": "Inferred parameters saved"})
 	})
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 20 — CLIP Local Auto-Tag
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// POST /api/photos/:id/auto-tag — queue CLIP zero-shot auto-tagging for a photo
+	app.Post("/api/photos/:id/auto-tag", requireJWT(), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+		if role != "SuperAdmin" && photo.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		if photo.Status != "completed" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
+		}
+
+		taskData := map[string]interface{}{
+			"photo_id":   photo.ID,
+			"minio_path": photo.MinioPath,
+		}
+		if err := queue.PushTask("auto_tag_queue", taskData); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue auto-tag task"})
+		}
+		return c.JSON(fiber.Map{"message": "Auto-tag task queued successfully"})
+	})
+
+	// PUT /internal/photos/:id/auto-tags — Python Worker callback: save derived tags
+	app.Put("/internal/photos/:id/auto-tags", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		var input struct {
+			AutoTags string `json:"auto_tags"` // JSON array of tag strings
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		var photo models.Photo
+		if result := database.DB.First(&photo, id); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
+		}
+
+		if err := database.DB.Model(&photo).Update("auto_tags", &input.AutoTags).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save auto-tags"})
+		}
+
+		payload, _ := json.Marshal(map[string]interface{}{"photo_id": photo.ID})
+		broadcastToUser(photo.UserID, "auto_tag_done", string(payload))
+
+		return c.JSON(fiber.Map{"message": "Auto-tags saved"})
+	})
+
 	// PUT /internal/photos/:id/dominant-colors — Worker writes back extracted dominant colours (Phase 16)
 	app.Put("/internal/photos/:id/dominant-colors", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
 		id := c.Params("id")
