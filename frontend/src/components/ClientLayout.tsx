@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Aperture, LogOut, Settings, Shield, MapPin, Images,
   UserCircle, Search, LayoutDashboard, Sun, Moon, Monitor,
-  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy,
+  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download,
 } from "lucide-react";
 
 const PUBLIC_PATHS = ["/login", "/register", "/share/", "/p/"];
@@ -34,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/albums", icon: Images, label: "相册", mobile: true },
   { href: "/map", icon: MapPin, label: "地图", mobile: false },
   { href: "/duplicates", icon: Copy, label: "去重", mobile: false },
+  { href: "/exports", icon: Download, label: "导出", mobile: false },
   { href: "/profile", icon: UserCircle, label: "个人", mobile: true },
   { href: "/admin", icon: Shield, label: "管理", adminOnly: true, mobile: false },
   { href: "/settings", icon: Settings, label: "设置", adminOnly: true, mobile: false },

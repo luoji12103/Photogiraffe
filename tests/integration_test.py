@@ -837,6 +837,7 @@ def main():
     test_phase16(token)
     test_phase17(token)
     test_phase18(token)
+    test_phase19(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -893,6 +894,29 @@ def test_phase18(token):
     d, status, _ = http("GET", "/api/admin/ai-rate-limits", token=token)
     ids = [r.get("ID") or r.get("id") for r in (d if isinstance(d, list) else [])]
     check("  deleted rule no longer in list", rule_id not in ids, ids)
+
+
+def test_phase19(token):
+    section("v0.19  Export History Management")
+
+    # ── GET /api/exports without token → 401 ──
+    _, status, _ = http("GET", "/api/exports")
+    check("GET /api/exports without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/exports → 200 with jobs/total/page/limit ──
+    d, status, _ = http("GET", "/api/exports", token=token)
+    check("GET /api/exports 200", status == 200, f"status={status}")
+    check("  response has jobs list", isinstance(d, dict) and isinstance(d.get("jobs"), list), d)
+    check("  response has total int", isinstance(d, dict) and isinstance(d.get("total"), int), d)
+    check("  response has page int", isinstance(d, dict) and isinstance(d.get("page"), int), d)
+
+    # ── GET /api/exports?status=completed → 200 ──
+    d, status, _ = http("GET", "/api/exports?status=completed", token=token)
+    check("GET /api/exports?status=completed 200", status == 200, f"status={status}")
+
+    # ── DELETE non-existent → 404 ──
+    _, status, _ = http("DELETE", "/api/exports/999999", token=token)
+    check("DELETE /api/exports/999999 → 404", status == 404, f"status={status}")
 
 
 if __name__ == "__main__":

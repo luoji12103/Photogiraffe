@@ -1448,6 +1448,88 @@ func main() {
 		return c.JSON(jobs)
 	})
 
+	// GET /api/exports — list all export jobs for the current user (paginated)
+	app.Get("/api/exports", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		statusFilter := c.Query("status", "")
+		offset := (page - 1) * limit
+
+		type JobDTO struct {
+			models.ExportJob
+			PhotoThumbnail  string `json:"photo_thumbnail"`
+			PhotoFilename   string `json:"photo_filename"`
+		}
+
+		var total int64
+		q := database.DB.Model(&models.ExportJob{}).Where("user_id = ?", uid)
+		if statusFilter != "" {
+			q = q.Where("status = ?", statusFilter)
+		}
+		q.Count(&total)
+
+		var jobs []models.ExportJob
+		q2 := database.DB.Where("user_id = ?", uid)
+		if statusFilter != "" {
+			q2 = q2.Where("status = ?", statusFilter)
+		}
+		q2.Order("created_at desc").Limit(limit).Offset(offset).Find(&jobs)
+
+		dtos := make([]JobDTO, 0, len(jobs))
+		for _, j := range jobs {
+			dto := JobDTO{ExportJob: j}
+			var photo models.Photo
+			if database.DB.Select("minio_path, original_filename").First(&photo, j.PhotoID).Error == nil {
+				// derive proxy WebP path from raw/ path
+				rawPath := photo.MinioPath
+				base := strings.TrimPrefix(rawPath, "raw/")
+				if dotIdx := strings.LastIndex(base, "."); dotIdx >= 0 {
+					base = base[:dotIdx]
+				}
+				dto.PhotoThumbnail = "proxy/" + base + ".webp"
+				dto.PhotoFilename = photo.OriginalFilename
+			}
+			dtos = append(dtos, dto)
+		}
+
+		return c.JSON(fiber.Map{
+			"jobs":  dtos,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+		})
+	})
+
+	// DELETE /api/exports/:job_id — delete an export job record (completed/failed only)
+	app.Delete("/api/exports/:job_id", requireJWT(), func(c *fiber.Ctx) error {
+		jobID := c.Params("job_id")
+		uid := userIDFromLocals(c)
+		var job models.ExportJob
+		if result := database.DB.First(&job, jobID); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
+		}
+		if job.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
+		}
+		if job.Status == "pending" || job.Status == "processing" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Cannot delete a job that is still running"})
+		}
+		// Remove output file from MinIO if present
+		if job.OutputPath != "" {
+			ctx := c.Context()
+			_ = storage.MinioClient.RemoveObject(ctx, "photos", job.OutputPath, minio.RemoveObjectOptions{})
+		}
+		database.DB.Delete(&job)
+		return c.JSON(fiber.Map{"message": "deleted"})
+	})
+
 	// GET /api/exports/:job_id — query single export job status
 	app.Get("/api/exports/:job_id", requireJWT(), func(c *fiber.Ctx) error {
 		jobID := c.Params("job_id")

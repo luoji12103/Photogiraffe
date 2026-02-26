@@ -466,6 +466,19 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 - **禁止** 前端 SSR 模式访问需要 JWT 的 API（全部用 CSR + authFetch）
 - **注意** `Tags` 字段为 `*string` 指针——不能赋 `""` 空字符串，应赋 `nil` 或合法 JSON
 
+### 版本号规范（v0.19 起执行）
+
+版本结构：`v{大版本}.{Phase}.{步骤}[.{修订}]`
+
+| 层级 | 含义 | 示例 |
+|------|------|------|
+| `v0.19` | Phase 19 整体完成 | — |
+| `v0.19.1` | Phase 19 第 1 子步骤 | `git commit -m "v0.19.1: ..."` |
+| `v0.19.1.1` | 步骤 1 的 bugfix/hotfix | `git commit -m "v0.19.1.1: ..."` |
+
+**commit 格式**：`v0.X.Y[.Z]: 简短描述`  
+详细规范见 [outline/agent/40_VersionConvention.md](./40_VersionConvention.md)
+
 ---
 
 ## 十三、验证测试命令
