@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-25（Phase 15 完成）
-> **当前已交付至**：v15.4（Phase 15 简约边框渲染引擎）
-> **下一步工作**：Phase 16（主色调提取 + 颜色筛选器）
+> **本文最后更新**：2026-02-26（Phase 17 完成）
+> **当前已交付至**：v17.4（Phase 17 感知哈希去重）
+> **下一步工作**：Phase 18（导出历史页 / AI 自动标签）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`d9a21c0` feat: Phase 15 — minimalist frame rendering engine (v15.1-v15.4)
+> **最新 commit**：`ae3876a` feat: Phase 17 — perceptual hash deduplication (v17.1-v17.4)
 
 ---
 
@@ -418,6 +418,8 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v15.1–15.4** | `d9a21c0` | 简约边框渲染：/internal/photos/:id/meta + Worker frame engine（8 函数，3 主题，9 比例，动态布局）+ ExportPanel 边框 UI |
 | fix | `4d652cc` | 导出 401 修复：process_export_task → _fetch_photo_meta()（X-Internal-Secret），meta 端点补充 minio_path |
 | **v16.1–16.4** | `b4cfb2a` | 主色调提取：DominantColors jsonb + Worker PIL.quantize + _color_bucket 11桶 HSL分类 + PUT /internal/photos/:id/dominant-colors + GET /photos color_bucket 筛选 + 前端色块 UI |
+| AI 分析同结果 fix | `77fab1f` | AI_ANALYSIS_PROMPT placeholder bug 修复 + kimi PROVIDER_BASE_URLS 修复 + EN/ZH 提示词选择 |
+| **v17.1–17.4** | `ae3876a` | 感知哈希去重：PHash varchar(16) + math/bits Hamming + Union-Find + PUT /internal/photos/:id/phash + GET /api/photos/duplicates + imagehash worker步骤 + 前端去重页面 + 148/148 测试 |
 
 ---
 
@@ -435,7 +437,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **36** | **Phase 13 Roadmap（已完成）** |
 | **37** | **Phase 14 Roadmap（已完成）** |
 | **38** | **Phase 15 Roadmap（已完成）** |
-| **39** | **Phase 16 Roadmap（已完成）** |
+| **39** | **Phase 17 Roadmap（已完成）** (`outline/agent/39_Phase17_Roadmap.md`，含 Phase 16+17 交付记录）|
 
 ---
 
@@ -505,48 +507,48 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 17 方向
+## 十五、当前状态 & Phase 18 方向
 
-**HEAD**：`b4cfb2a` Phase 16 主色调提取 + 颜色桶筛选器（v16.1-v16.4）
-**集成测试**：**`142/142 PASS`** ✅
+**HEAD**：`ae3876a` Phase 17 感知哈希去重（v17.1-v17.4）
+**集成测试**：**`148/148 PASS`** ✅
 **全部服务**：正常运行于 Docker Compose
 
 ### 最近完成阶段摘要
 
 | 阶段 | Commit | 状态 | 内容摘要 |
 |------|--------|------|----------|
-| Phase 14 v14.1–14.6 | `3f091da` | ✅ | ExportJob 扩展 + 相册 ZIP/PDF 导出 + 冲印规格裁切 + 前端导出面板 |
 | Phase 15 v15.1–15.4 | `d9a21c0` | ✅ | /internal/photos/:id/meta + frame engine（8 函数，3 主题，9 比例）+ ExportPanel 边框 UI |
-| 导出 401 fix | `4d652cc` | ✅ | process_export_task → _fetch_photo_meta() X-Internal-Secret，meta 端点补充 minio_path |
 | Phase 16 v16.1–16.4 | `b4cfb2a` | ✅ | DominantColors jsonb + PIL.quantize + _color_bucket 11桶 + 颜色筛选 API + 前端色块 UI |
+| AI 分析 fix | `77fab1f` | ✅ | AI_ANALYSIS_PROMPT placeholder bug 修复 + kimi 修复 + EN/ZH 提示词语言选择 |
+| Phase 17 v17.1–17.4 | `ae3876a` | ✅ | PHash varchar(16) + Hamming/Union-Find + /phash 端点 + /duplicates API + Worker imagehash + 前端去重页 |
 
-### Phase 16 完整交付清单
+### Phase 17 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v16.1 | ✅ | models.go DominantColors *string (jsonb) |
-| v16.2 | ✅ | Worker _color_bucket() HSL 11桶 + _extract_dominant_colors() PIL.quantize+numpy + process_photo() step 5 |
-| v16.3 | ✅ | Go Core PUT /internal/photos/:id/dominant-colors + GET /photos color_bucket 筛选 |
-| v16.4 | ✅ | page.tsx 11色圆饼筛选行 + PhotoGrid.tsx 悬停色块 + 142/142 测试 + git commit `b4cfb2a` |
+| v17.1 | ✅ | models.go PHash *string gorm:"type:varchar(16)" + main.go math/bits + PUT /internal/photos/:id/phash + GET /api/photos/duplicates（Union-Find Hamming≤10）|
+| v17.2 | ✅ | requirements.txt imagehash + main.py import imagehash + step 6 phash 计算推送 |
+| v17.3 | ✅ | frontend/src/app/api/photos/duplicates/route.ts 代理 + duplicates/page.tsx 去重页面 + ClientLayout.tsx Copy 导航项 |
+| v17.4 | ✅ | tests/integration_test.py test_phase17() 6用例 + 148/148 + git commit `ae3876a` |
 
-### Phase 16 新增 API
+### Phase 17 新增 API
 
 | Method | Path | Auth | 说明 |
 |--------|------|------|------|
-| PUT | /internal/photos/:id/dominant-colors | X-Internal-Secret | Worker 写入颜色数组 JSON（0行更新也返回 200）|
-| GET | /photos?color_bucket=blue | JWT Bearer | 按颜色桶筛选（jsonb::text ILIKE）|
+| PUT | /internal/photos/:id/phash | X-Internal-Secret | Worker 写入 16字符 hex pHash（0行更新也返回 200）|
+| GET | /api/photos/duplicates | JWT Bearer | 返回 {groups, total_groups}，每组含 ≥2 张 Hamming≤10 的相似照片 |
 
-### Phase 17 方向（待规划）
+### Phase 18 方向（待规划）
 
 | 优先级 | 方向 | 说明 |
 |--------|------|------|
-| 高 | 感知哈希去重 | pHash 计算 + 相似度检测 API + 前端重复提示 |
 | 中 | 导出历史页 | 独立导出历史管理界面 + 状态跟踪 |
 | 低 | AI 自动标签 | CLIP/BLIP 等模型批量添加语义标签 |
+| 低 | 地图聚类优化 | MarkerCluster 替换当前单点渲染 |
 
 **开始下一 Phase 步骤**：
 1. 在 `outline/agent/` 创建新 Phase Roadmap 文档
-2. 按规范实现 → build → 142/142 test → commit
+2. 按规范实现 → build → 148/148 test → commit
 3. 完成后更新第十节版本历史和本节
 
 ---
