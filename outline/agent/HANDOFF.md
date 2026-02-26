@@ -416,6 +416,8 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v13.1–13.5** | `ea91f92` | IPTC/XMP 元数据：模型扩展 + API 3 端点 + Worker XMP 提取/IPTC 写入 + IPTCPanel 前端组件 |
 | **v14.1–14.6** | `3f091da` | 相册批量导出：ExportJob 扩展 + 3 个相册端点 + Worker ZIP/PDF + 冲印裁切 + 前端导出面板 |
 | **v15.1–15.4** | `d9a21c0` | 简约边框渲染：/internal/photos/:id/meta + Worker frame engine（8 函数，3 主题，9 比例，动态布局）+ ExportPanel 边框 UI |
+| fix | `4d652cc` | 导出 401 修复：process_export_task → _fetch_photo_meta()（X-Internal-Secret），meta 端点补充 minio_path |
+| **v16.1–16.4** | `b4cfb2a` | 主色调提取：DominantColors jsonb + Worker PIL.quantize + _color_bucket 11桶 HSL分类 + PUT /internal/photos/:id/dominant-colors + GET /photos color_bucket 筛选 + 前端色块 UI |
 
 ---
 
@@ -433,8 +435,7 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **36** | **Phase 13 Roadmap（已完成）** |
 | **37** | **Phase 14 Roadmap（已完成）** |
 | **38** | **Phase 15 Roadmap（已完成）** |
-| **38** | **Phase 15 Roadmap（已完成）** |
-| **38** | **Phase 15 Roadmap（已完成）** |
+| **39** | **Phase 16 Roadmap（已完成）** |
 
 ---
 
@@ -504,46 +505,48 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 16 方向
+## 十五、当前状态 & Phase 17 方向
 
-**HEAD**：`d9a21c0` Phase 15 简约边框渲染引擎（v15.1-v15.4）
-**集成测试**：**`129/129 PASS`** ✅
+**HEAD**：`b4cfb2a` Phase 16 主色调提取 + 颜色桶筛选器（v16.1-v16.4）
+**集成测试**：**`142/142 PASS`** ✅
 **全部服务**：正常运行于 Docker Compose
 
 ### 最近完成阶段摘要
 
 | 阶段 | Commit | 状态 | 内容摘要 |
 |------|--------|------|----------|
-| Phase 13 v13.1–13.5 | `ea91f92` | ✅ | ExifData Copyright/Creator + API + Worker XMP/IPTC + IPTCPanel |
 | Phase 14 v14.1–14.6 | `3f091da` | ✅ | ExportJob 扩展 + 相册 ZIP/PDF 导出 + 冲印规格裁切 + 前端导出面板 |
 | Phase 15 v15.1–15.4 | `d9a21c0` | ✅ | /internal/photos/:id/meta + frame engine（8 函数，3 主题，9 比例）+ ExportPanel 边框 UI |
+| 导出 401 fix | `4d652cc` | ✅ | process_export_task → _fetch_photo_meta() X-Internal-Secret，meta 端点补充 minio_path |
+| Phase 16 v16.1–16.4 | `b4cfb2a` | ✅ | DominantColors jsonb + PIL.quantize + _color_bucket 11桶 + 颜色筛选 API + 前端色块 UI |
 
-### Phase 15 完整交付清单
+### Phase 16 完整交付清单
 
 | 子版本 | 状态 | 内容摘要 |
 |--------|------|---------|
-| v15.1 | ✅ | Go Core GET /internal/photos/:id/meta（13 字段，X-Internal-Secret）|
-| v15.2 | ✅ | Worker frame engine：ImageDraw/Font + _CANVAS_RATIOS + _FRAME_THEMES + 8 函数 + step 5b |
-| v15.3 | ✅ | ExportPanel.tsx：FrameStyle/FrameRatio 类型 + 6 状态 + 可折叠边框 UI + POST 字段 |
-| v15.4 | ✅ | go build 通过 + 129/129 测试 + git commit `d9a21c0` |
+| v16.1 | ✅ | models.go DominantColors *string (jsonb) |
+| v16.2 | ✅ | Worker _color_bucket() HSL 11桶 + _extract_dominant_colors() PIL.quantize+numpy + process_photo() step 5 |
+| v16.3 | ✅ | Go Core PUT /internal/photos/:id/dominant-colors + GET /photos color_bucket 筛选 |
+| v16.4 | ✅ | page.tsx 11色圆饼筛选行 + PhotoGrid.tsx 悬停色块 + 142/142 测试 + git commit `b4cfb2a` |
 
-### Phase 15 新增 API
+### Phase 16 新增 API
 
 | Method | Path | Auth | 说明 |
 |--------|------|------|------|
-| GET | /internal/photos/:id/meta | X-Internal-Secret | 返回照片描述/AI分析/IPTC/EXIF 完整元数据（13 字段）|
+| PUT | /internal/photos/:id/dominant-colors | X-Internal-Secret | Worker 写入颜色数组 JSON（0行更新也返回 200）|
+| GET | /photos?color_bucket=blue | JWT Bearer | 按颜色桶筛选（jsonb::text ILIKE）|
 
-### Phase 16 方向（待规划）
+### Phase 17 方向（待规划）
 
 | 优先级 | 方向 | 说明 |
 |--------|------|------|
-| 高 | 主色调提取 | Worker k-means + DominantColors 字段 + 前端颜色筛选 |
-| 中 | 感知哈希去重 | pHash 计算 + 相似度检测 API |
-| 中 | 导出历史页 | 独立导出历史管理界面 |
+| 高 | 感知哈希去重 | pHash 计算 + 相似度检测 API + 前端重复提示 |
+| 中 | 导出历史页 | 独立导出历史管理界面 + 状态跟踪 |
+| 低 | AI 自动标签 | CLIP/BLIP 等模型批量添加语义标签 |
 
 **开始下一 Phase 步骤**：
 1. 在 `outline/agent/` 创建新 Phase Roadmap 文档
-2. 按规范实现 → build → 129/129 test → commit
+2. 按规范实现 → build → 142/142 test → commit
 3. 完成后更新第十节版本历史和本节
 
 ---
