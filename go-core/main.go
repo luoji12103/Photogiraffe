@@ -795,6 +795,7 @@ func main() {
 		config.Provider = input.Provider
 		config.BaseURL = input.BaseURL
 		config.ModelName = input.ModelName
+		config.PromptLanguage = input.PromptLanguage
 		if input.APIKey != "********" && input.APIKey != "" {
 			config.APIKey = input.APIKey
 		}
@@ -833,13 +834,18 @@ func main() {
 		if provider == "" {
 			provider = "openai_compatible"
 		}
+		promptLang := config.PromptLanguage
+		if promptLang == "" {
+			promptLang = "en"
+		}
 		taskData := map[string]interface{}{
-			"photo_id":   photo.ID,
-			"minio_path": photo.MinioPath,
-			"provider":   provider,
-			"base_url":   config.BaseURL,
-			"api_key":    config.APIKey,
-			"model_name": config.ModelName,
+			"photo_id":        photo.ID,
+			"minio_path":      photo.MinioPath,
+			"provider":        provider,
+			"base_url":        config.BaseURL,
+			"api_key":         config.APIKey,
+			"model_name":      config.ModelName,
+			"prompt_language": promptLang,
 		}
 		err := queue.PushTask("ai_analysis_queue", taskData)
 		if err != nil {
@@ -914,7 +920,11 @@ func main() {
 			proxyPath = proxyPath[:lastDot] + ".webp"
 		}
 
-		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName); err != nil {
+		inferPromptLang := config.PromptLanguage
+		if inferPromptLang == "" {
+			inferPromptLang = "en"
+		}
+		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName, inferPromptLang); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue parameter inference task"})
 		}
 

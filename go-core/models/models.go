@@ -71,10 +71,11 @@ type FeatureFlag struct {
 
 type AIConfig struct {
 	gorm.Model
-	Provider  string `gorm:"not null;default:'openai_compatible'"` // openai | google | anthropic | zhipu | deepseek | minimax | openai_compatible
-	BaseURL   string // optional: required only for openai_compatible provider
-	APIKey    string `gorm:"not null"`
-	ModelName string `gorm:"not null"`
+	Provider       string `gorm:"not null;default:'openai_compatible'"` // openai | google | anthropic | zhipu | deepseek | minimax | openai_compatible
+	BaseURL        string // optional: required only for openai_compatible provider
+	APIKey         string `gorm:"not null"`
+	ModelName      string `gorm:"not null"`
+	PromptLanguage string `gorm:"default:'en'"` // "en" | "zh" — controls prompt language for AI analysis & param inference
 }
 
 // ExportJob tracks a photo export request through the pipeline.

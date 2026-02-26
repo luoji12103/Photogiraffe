@@ -86,13 +86,14 @@ func PublishAlbumExportTask(jobID uint, albumID uint, optsJSON string) error {
 }
 
 // PublishInferParamsTask pushes an AI parameter inference job onto infer_params_queue.
-func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, apiKey, modelName string) error {
+func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, apiKey, modelName, promptLanguage string) error {
 	return PushTask("infer_params_queue", map[string]interface{}{
-		"photo_id":   photoID,
-		"minio_path": minioPath,
-		"provider":   provider,
-		"base_url":   baseURL,
-		"api_key":    apiKey,
-		"model_name": modelName,
+		"photo_id":        photoID,
+		"minio_path":      minioPath,
+		"provider":        provider,
+		"base_url":        baseURL,
+		"api_key":         apiKey,
+		"model_name":      modelName,
+		"prompt_language": promptLanguage,
 	})
 }
