@@ -429,6 +429,27 @@ You are an expert photography critic and art analyst. Analyze the provided image
 Ensure the response is valid JSON only, no markdown fences.
 """
 
+AI_ANALYSIS_PROMPT_ZH = """
+你是一位专业的摄影评论家和艺术分析师。请分析所提供的图片，并以中文返回如下 JSON 结构（字段名保持不变，仅内容使用中文）：
+{
+    "description": "对画面场景、主体和光线的详细描述。",
+    "composition": "构图技巧分析（如三分法、引导线、框景构图等）。",
+    "color_emotion": "对色彩色调及其传达的情感气氛的分析。",
+    "artistic_advice": "从艺术角度提出的建设性建议或改进意见。"
+}
+请确保返回内容为合法的 JSON，不要包含任何 Markdown 标记。
+"""
+
+INFER_PARAMS_PROMPT_ZH = """你是一位专业的照片后期处理 AI。请分析这张照片，并建议最佳颜色调整参数以改善视觉效果。
+
+仅返回如下的 JSON，不要背离格式，不要添加解释或 Markdown 围栏：
+{
+  "exposure":   <浮点数 -3.0 到3.0，典型范围 -1 到1>,
+  "brightness": <浮点数 -1.0 到1.0>,
+  "contrast":   <浮点数 -1.0 到1.0>,
+  "saturation": <浮点数 0.0 到2.0，1.0 表示不变>,
+  "tonemap":    <布尔值，仅当照片明显曝光过度或是 HDR 时才为 true>
+}"""
 INFER_PARAMS_PROMPT = """You are an expert photo retouching AI. Analyze this photograph and suggest optimal colour adjustment parameters to make it visually appealing.
 
 Return ONLY a JSON object with these exact keys (no explanation, no markdown fences):
@@ -441,7 +462,7 @@ Return ONLY a JSON object with these exact keys (no explanation, no markdown fen
 }"""
 
 
-def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, base_url: str) -> str:
+def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, base_url: str, prompt: str = AI_ANALYSIS_PROMPT) -> str:
     """OpenAI / DeepSeek / MiniMax / any OpenAI-compatible endpoint."""
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
@@ -449,7 +470,7 @@ def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, ba
         messages=[{
             "role": "user",
             "content": [
-                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+                {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
             ],
         }],
@@ -458,14 +479,14 @@ def _call_openai_compatible(base64_image: str, api_key: str, model_name: str, ba
     return response.choices[0].message.content
 
 
-def _call_google(image_data: bytes, api_key: str, model_name: str) -> str:
+def _call_google(image_data: bytes, api_key: str, model_name: str, prompt: str = AI_ANALYSIS_PROMPT) -> str:
     """Google Gemini via google-genai SDK (new API)."""
     client = google_genai.Client(api_key=api_key)
     response = client.models.generate_content(
         model=model_name,
         contents=[
             google_types.Content(parts=[
-                google_types.Part(text=AI_ANALYSIS_PROMPT),
+                google_types.Part(text=prompt),
                 google_types.Part.from_bytes(data=image_data, mime_type="image/webp"),
             ])
         ],
@@ -476,7 +497,7 @@ def _call_google(image_data: bytes, api_key: str, model_name: str) -> str:
     return response.text
 
 
-def _call_anthropic(base64_image: str, api_key: str, model_name: str) -> str:
+def _call_anthropic(base64_image: str, api_key: str, model_name: str, prompt: str = AI_ANALYSIS_PROMPT) -> str:
     """Anthropic Claude via anthropic SDK."""
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
@@ -493,14 +514,14 @@ def _call_anthropic(base64_image: str, api_key: str, model_name: str) -> str:
                         "data": base64_image,
                     },
                 },
-                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+                {"type": "text", "text": prompt},
             ],
         }],
     )
     return message.content[0].text
 
 
-def _call_zhipu(base64_image: str, api_key: str, model_name: str) -> str:
+def _call_zhipu(base64_image: str, api_key: str, model_name: str, prompt: str = AI_ANALYSIS_PROMPT) -> str:
     """ZhipuAI (GLM-4V) via zhipuai SDK."""
     client = ZhipuAI(api_key=api_key)
     response = client.chat.completions.create(
@@ -509,21 +530,23 @@ def _call_zhipu(base64_image: str, api_key: str, model_name: str) -> str:
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
-                {"type": "text", "text": AI_ANALYSIS_PROMPT},
+                {"type": "text", "text": prompt},
             ],
         }],
     )
     return response.choices[0].message.content
 
 
-def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url=""):
+def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url="", prompt_language="en"):
     bucket_name = "photos"
     # Normalise provider; fall back to openai_compatible for legacy records
     if not provider:
         provider = "openai_compatible"
+    # Select prompt based on language preference
+    prompt = AI_ANALYSIS_PROMPT_ZH if prompt_language == "zh" else AI_ANALYSIS_PROMPT
 
     try:
-        logger.info(f"Starting AI analysis for photo {photo_id} via provider={provider}, model={model_name}...")
+        logger.info(f"Starting AI analysis for photo {photo_id} via provider={provider}, model={model_name}, lang={prompt_language}...")
 
         # 1. Download proxy image from MinIO
         proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
@@ -537,20 +560,20 @@ def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, m
 
         # 3. Dispatch to provider SDK
         if provider == "google":
-            analysis_result = _call_google(image_data, api_key, model_name)
+            analysis_result = _call_google(image_data, api_key, model_name, prompt)
 
         elif provider == "anthropic":
-            analysis_result = _call_anthropic(base64_image, api_key, model_name)
+            analysis_result = _call_anthropic(base64_image, api_key, model_name, prompt)
 
         elif provider == "zhipu":
-            analysis_result = _call_zhipu(base64_image, api_key, model_name)
+            analysis_result = _call_zhipu(base64_image, api_key, model_name, prompt)
 
         else:
             # openai | deepseek | minimax | openai_compatible
             effective_base_url = PROVIDER_BASE_URLS.get(provider, base_url)
             if not effective_base_url:
                 raise ValueError(f"Provider '{provider}' requires a Base URL but none was provided.")
-            analysis_result = _call_openai_compatible(base64_image, api_key, model_name, effective_base_url)
+            analysis_result = _call_openai_compatible(base64_image, api_key, model_name, effective_base_url, prompt)
 
         logger.info(f"AI analysis completed for photo {photo_id}: {analysis_result}")
 
@@ -1422,12 +1445,12 @@ def _extract_json(text: str) -> str:
     return text  # Let json.loads raise on failure
 
 
-def _call_openai_infer(base64_image: str, api_key: str, model_name: str, base_url: str) -> str:
+def _call_openai_infer(base64_image: str, api_key: str, model_name: str, base_url: str, prompt: str = INFER_PARAMS_PROMPT) -> str:
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model_name,
         messages=[{"role": "user", "content": [
-            {"type": "text", "text": INFER_PARAMS_PROMPT},
+            {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{base64_image}"}},
         ]}],
         response_format={"type": "json_object"},
@@ -1435,12 +1458,12 @@ def _call_openai_infer(base64_image: str, api_key: str, model_name: str, base_ur
     return response.choices[0].message.content
 
 
-def _call_google_infer(image_data: bytes, api_key: str, model_name: str) -> str:
+def _call_google_infer(image_data: bytes, api_key: str, model_name: str, prompt: str = INFER_PARAMS_PROMPT) -> str:
     client = google_genai.Client(api_key=api_key)
     response = client.models.generate_content(
         model=model_name,
         contents=[google_types.Content(parts=[
-            google_types.Part(text=INFER_PARAMS_PROMPT),
+            google_types.Part(text=prompt),
             google_types.Part.from_bytes(data=image_data, mime_type="image/webp"),
         ])],
         config=google_types.GenerateContentConfig(response_mime_type="application/json"),
@@ -1448,13 +1471,13 @@ def _call_google_infer(image_data: bytes, api_key: str, model_name: str) -> str:
     return response.text
 
 
-def _call_anthropic_infer(base64_image: str, api_key: str, model_name: str) -> str:
+def _call_anthropic_infer(base64_image: str, api_key: str, model_name: str, prompt: str = INFER_PARAMS_PROMPT) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model=model_name, max_tokens=512,
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": base64_image}},
-            {"type": "text", "text": INFER_PARAMS_PROMPT},
+            {"type": "text", "text": prompt},
         ]}],
     )
     return message.content[0].text
@@ -1462,13 +1485,15 @@ def _call_anthropic_infer(base64_image: str, api_key: str, model_name: str) -> s
 
 def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
                                provider: str, api_key: str, model_name: str,
-                               base_url: str = "") -> bool:
+                               base_url: str = "", prompt_language: str = "en") -> bool:
     """Analyse a photo via LLM and save suggested adjustment params to DB."""
     bucket_name = "photos"
     if not provider:
         provider = "openai_compatible"
+    # Select prompt based on language preference
+    prompt = INFER_PARAMS_PROMPT_ZH if prompt_language == "zh" else INFER_PARAMS_PROMPT
     try:
-        logger.info(f"[infer:{photo_id}] Starting param inference via {provider}/{model_name}...")
+        logger.info(f"[infer:{photo_id}] Starting param inference via {provider}/{model_name}, lang={prompt_language}...")
         response = minio_client.get_object(bucket_name, minio_path)
         image_data = response.read()
         response.close()
@@ -1477,14 +1502,14 @@ def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
         base64_image = base64.b64encode(image_data).decode("utf-8")
 
         if provider == "google":
-            raw = _call_google_infer(image_data, api_key, model_name)
+            raw = _call_google_infer(image_data, api_key, model_name, prompt)
         elif provider == "anthropic":
-            raw = _call_anthropic_infer(base64_image, api_key, model_name)
+            raw = _call_anthropic_infer(base64_image, api_key, model_name, prompt)
         else:
             effective_base_url = PROVIDER_BASE_URLS.get(provider, base_url)
             if not effective_base_url:
                 raise ValueError(f"Provider '{provider}' requires a Base URL")
-            raw = _call_openai_infer(base64_image, api_key, model_name, effective_base_url)
+            raw = _call_openai_infer(base64_image, api_key, model_name, effective_base_url, prompt)
 
         params_json_str = _extract_json(raw)
         parsed = json.loads(params_json_str)
@@ -1570,8 +1595,10 @@ def main():
                         api_key = message_data.get("api_key")
                         model_name = message_data.get("model_name")
                         
+                        prompt_language = message_data.get("prompt_language", "en")
+
                         if photo_id and minio_path and api_key and model_name:
-                            success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url)
+                            success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language)
                             if success:
                                 # ACK the message
                                 r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
@@ -1606,9 +1633,11 @@ def main():
                         api_key    = message_data.get("api_key")
                         model_name = message_data.get("model_name")
 
+                        prompt_language = message_data.get("prompt_language", "en")
+
                         if photo_id and minio_path and api_key and model_name:
                             process_infer_params_task(minio_client, photo_id, minio_path,
-                                                      provider, api_key, model_name, base_url)
+                                                      provider, api_key, model_name, base_url, prompt_language)
                         else:
                             logger.warning(f"Invalid infer-params message data: {message_data}")
 

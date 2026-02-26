@@ -69,6 +69,7 @@ interface AIConfig {
   BaseURL: string;
   APIKey: string;
   ModelName: string;
+  PromptLanguage: string; // "en" | "zh"
 }
 
 interface StorageConfig {
@@ -91,7 +92,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("ai");
 
   // AI Config
-  const [config, setConfig] = useState<AIConfig>({ Provider: "openai", BaseURL: "", APIKey: "", ModelName: "gpt-4o" });
+  const [config, setConfig] = useState<AIConfig>({ Provider: "openai", BaseURL: "", APIKey: "", ModelName: "gpt-4o", PromptLanguage: "en" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [aiMessage, setAiMessage] = useState({ text: "", type: "" });
@@ -123,7 +124,7 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.APIKey) {
-          setConfig({ Provider: data.Provider || "openai_compatible", BaseURL: data.BaseURL || "", APIKey: data.APIKey, ModelName: data.ModelName || "" });
+          setConfig({ Provider: data.Provider || "openai_compatible", BaseURL: data.BaseURL || "", APIKey: data.APIKey, ModelName: data.ModelName || "", PromptLanguage: data.PromptLanguage || "en" });
         }
       }
     } catch (error) { console.error("Failed to fetch config:", error); }
@@ -329,6 +330,35 @@ export default function SettingsPage() {
                   required
                 />
                 <p className="text-xs text-zinc-500 mt-1">留空则保留当前密钥。</p>
+              </div>
+
+              {/* Prompt Language */}
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                  AI 回复语言
+                  <span className="ml-2 text-xs font-normal text-zinc-500">— 控制分析结果和调参建议使用的语言</span>
+                </label>
+                <div className="flex gap-2">
+                  {(["en", "zh"] as const).map((lang) => (
+                    <button
+                      key={lang}
+                      type="button"
+                      onClick={() => setConfig((prev) => ({ ...prev, PromptLanguage: lang }))}
+                      className={`px-5 py-2 rounded-lg text-sm border font-medium transition-colors ${
+                        config.PromptLanguage === lang
+                          ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                          : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                      }`}
+                    >
+                      {lang === "en" ? "🌐 English" : "🇨🇳 中文"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-zinc-500 mt-1.5">
+                  {config.PromptLanguage === "zh"
+                    ? "大模型将使用中文提示词，分析结果以中文返回。"
+                    : "The model will be prompted in English and return analysis in English."}
+                </p>
               </div>
 
               {/* Base URL */}
