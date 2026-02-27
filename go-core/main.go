@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"math"
 	"math/bits"
+	"net/smtp"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -264,6 +266,38 @@ func generateShareToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// sha256sum returns the lowercase hex SHA-256 of a string.
+func sha256sum(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// sendEmail sends a plain-text email using the given SmtpConfig.
+func sendEmail(cfg models.SmtpConfig, to, subject, body string) error {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	from := fmt.Sprintf("%s <%s>", cfg.FromName, cfg.Username)
+	msg := []byte("From: " + from + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
+		body + "\r\n")
+	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+	return smtp.SendMail(addr, auth, cfg.Username, []string{to}, msg)
+}
+
+// recordLoginHistory inserts a LoginHistory row and trims rows beyond 10 per user.
+func recordLoginHistory(userID uint, ip, ua string, success bool) {
+	database.DB.Create(&models.LoginHistory{
+		UserID: userID, IPAddress: ip, UserAgent: ua, Success: success,
+	})
+	// Keep only the most-recent 10 rows per user
+	var oldest []models.LoginHistory
+	database.DB.Where("user_id = ?", userID).Order("created_at DESC").Offset(10).Find(&oldest)
+	for _, old := range oldest {
+		database.DB.Delete(&old)
+	}
+}
+
 func main() {
 	// JWT secret — fall back to dev default but warn
 	if os.Getenv("JWT_SECRET") == "" {
@@ -459,9 +493,11 @@ func main() {
 
 		var user models.User
 		if result := database.DB.Where("username = ?", input.Username).First(&user); result.Error != nil {
+			go recordLoginHistory(0, c.IP(), c.Get("User-Agent"), false)
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
+			go recordLoginHistory(user.ID, c.IP(), c.Get("User-Agent"), false)
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 		}
 
@@ -480,6 +516,7 @@ func main() {
 			TokenHash: hashRefresh,
 			ExpiresAt: refreshExpiry,
 		})
+		go recordLoginHistory(user.ID, c.IP(), c.Get("User-Agent"), true)
 
 		c.Cookie(&fiber.Cookie{
 			Name:     "refresh_token",
@@ -571,6 +608,240 @@ func main() {
 			"email":    user.Email,
 			"role":     user.Role,
 		})
+	})
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Phase 22 — Account Security + SMTP
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// PUT /api/auth/change-password — change password (requires old password)
+	app.Put("/api/auth/change-password", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var input struct {
+			OldPassword string `json:"old_password"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := c.BodyParser(&input); err != nil || input.OldPassword == "" || input.NewPassword == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "old_password and new_password are required"})
+		}
+		if len(input.NewPassword) < 8 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New password must be at least 8 characters"})
+		}
+		var user models.User
+		if result := database.DB.First(&user, uid); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.OldPassword)); err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Old password is incorrect"})
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), 12)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+		}
+		database.DB.Model(&user).Update("password_hash", string(hash))
+		// Revoke all refresh tokens to force re-login
+		database.DB.Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = false", uid).Update("revoked", true)
+		c.ClearCookie("refresh_token")
+		return c.JSON(fiber.Map{"message": "Password changed successfully. Please log in again."})
+	})
+
+	// PUT /api/auth/update-profile — update username and/or email
+	app.Put("/api/auth/update-profile", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var input struct {
+			Username string `json:"username"`
+			Email    string `json:"email"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		if input.Username == "" && input.Email == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "At least one of username or email is required"})
+		}
+		var user models.User
+		if result := database.DB.First(&user, uid); result.Error != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+		}
+		updates := map[string]interface{}{}
+		if input.Username != "" && input.Username != user.Username {
+			// Check uniqueness
+			var count int64
+			database.DB.Model(&models.User{}).Where("username = ? AND id != ?", input.Username, uid).Count(&count)
+			if count > 0 {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Username already taken"})
+			}
+			updates["username"] = input.Username
+		}
+		if input.Email != "" && input.Email != user.Email {
+			var count int64
+			database.DB.Model(&models.User{}).Where("email = ? AND id != ?", input.Email, uid).Count(&count)
+			if count > 0 {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Email already registered"})
+			}
+			updates["email"] = input.Email
+		}
+		if len(updates) > 0 {
+			database.DB.Model(&user).Updates(updates)
+		}
+		database.DB.First(&user, uid)
+		return c.JSON(fiber.Map{"message": "Profile updated", "username": user.Username, "email": user.Email})
+	})
+
+	// GET /api/auth/login-history — last 10 login attempts for current user
+	app.Get("/api/auth/login-history", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var history []models.LoginHistory
+		database.DB.Where("user_id = ?", uid).Order("created_at DESC").Limit(10).Find(&history)
+		type item struct {
+			IP        string    `json:"ip"`
+			UserAgent string    `json:"user_agent"`
+			Success   bool      `json:"success"`
+			At        time.Time `json:"at"`
+		}
+		result := make([]item, 0, len(history))
+		for _, h := range history {
+			result = append(result, item{
+				IP:        h.IPAddress,
+				UserAgent: h.UserAgent,
+				Success:   h.Success,
+				At:        h.CreatedAt,
+			})
+		}
+		return c.JSON(result)
+	})
+
+	// POST /api/auth/forgot-password — request password reset email
+	app.Post("/api/auth/forgot-password", authLimiter, func(c *fiber.Ctx) error {
+		var input struct {
+			Email string `json:"email"`
+		}
+		if err := c.BodyParser(&input); err != nil || input.Email == "" {
+			// Still return 200 to prevent email enumeration
+			return c.JSON(fiber.Map{"message": "If that email exists, a reset link has been sent."})
+		}
+		var user models.User
+		if err := database.DB.Where("email = ?", input.Email).First(&user).Error; err != nil {
+			// User not found — return 200 silently (anti-enumeration)
+			return c.JSON(fiber.Map{"message": "If that email exists, a reset link has been sent."})
+		}
+		// Generate raw token (32 bytes hex) + SHA-256 hash for storage
+		rawBytes := make([]byte, 32)
+		rand.Read(rawBytes)
+		rawToken := hex.EncodeToString(rawBytes)
+		h := sha256sum(rawToken)
+		expiry := time.Now().Add(5 * time.Minute)
+		// Mark previous tokens for this user as used
+		database.DB.Model(&models.PasswordResetToken{}).Where("user_id = ? AND used = false", user.ID).Update("used", true)
+		database.DB.Create(&models.PasswordResetToken{
+			UserID: user.ID, TokenHash: h, ExpiresAt: expiry,
+		})
+		// Send email if SMTP enabled
+		var smtp models.SmtpConfig
+		if database.DB.First(&smtp).Error == nil && smtp.Enabled {
+			frontendURL := os.Getenv("FRONTEND_URL")
+			if frontendURL == "" {
+				frontendURL = "http://localhost:3000"
+			}
+			link := frontendURL + "/reset-password?token=" + rawToken
+			go sendEmail(smtp, user.Email, "重置您的 Photogiraffe 密码",
+				"您的密码重置链接（5分钟内有效）：\n\n"+link+"\n\n如非本人操作请忽略此邮件。")
+		}
+		return c.JSON(fiber.Map{"message": "If that email exists, a reset link has been sent."})
+	})
+
+	// POST /api/auth/reset-password — submit reset token + new password
+	app.Post("/api/auth/reset-password", authLimiter, func(c *fiber.Ctx) error {
+		var input struct {
+			Token       string `json:"token"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := c.BodyParser(&input); err != nil || input.Token == "" || input.NewPassword == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "token and new_password are required"})
+		}
+		if len(input.NewPassword) < 8 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Password must be at least 8 characters"})
+		}
+		h := sha256sum(input.Token)
+		var prt models.PasswordResetToken
+		if err := database.DB.Where("token_hash = ? AND used = false AND expires_at > ?", h, time.Now()).First(&prt).Error; err != nil {
+			return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Invalid or expired reset token"})
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), 12)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+		}
+		database.DB.Model(&models.User{}).Where("id = ?", prt.UserID).Update("password_hash", string(hash))
+		database.DB.Model(&prt).Update("used", true)
+		// Revoke all refresh tokens
+		database.DB.Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = false", prt.UserID).Update("revoked", true)
+		return c.JSON(fiber.Map{"message": "Password reset successfully. Please log in with your new password."})
+	})
+
+	// GET /api/admin/smtp — get SMTP config (password masked)
+	app.Get("/api/admin/smtp", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var cfg models.SmtpConfig
+		if database.DB.First(&cfg).Error != nil {
+			return c.JSON(fiber.Map{"host": "", "port": 587, "username": "", "from_name": "Photogiraffe", "use_tls": true, "enabled": false})
+		}
+		return c.JSON(fiber.Map{
+			"id": cfg.ID, "host": cfg.Host, "port": cfg.Port,
+			"username": cfg.Username, "password": "****",
+			"from_name": cfg.FromName, "use_tls": cfg.UseTLS, "enabled": cfg.Enabled,
+		})
+	})
+
+	// PUT /api/admin/smtp — create or update SMTP config
+	app.Put("/api/admin/smtp", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var input struct {
+			Host     string `json:"host"`
+			Port     int    `json:"port"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+			FromName string `json:"from_name"`
+			UseTLS   bool   `json:"use_tls"`
+			Enabled  bool   `json:"enabled"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+		var cfg models.SmtpConfig
+		if database.DB.First(&cfg).Error != nil {
+			cfg = models.SmtpConfig{}
+		}
+		cfg.Host = input.Host
+		if input.Port > 0 {
+			cfg.Port = input.Port
+		} else {
+			cfg.Port = 587
+		}
+		cfg.Username = input.Username
+		if input.Password != "" && input.Password != "****" {
+			cfg.Password = input.Password
+		}
+		cfg.FromName = input.FromName
+		cfg.UseTLS = input.UseTLS
+		cfg.Enabled = input.Enabled
+		if cfg.ID == 0 {
+			database.DB.Create(&cfg)
+		} else {
+			database.DB.Save(&cfg)
+		}
+		return c.JSON(fiber.Map{"message": "SMTP config saved"})
+	})
+
+	// POST /api/admin/smtp/test — send a test email to the admin's own email
+	app.Post("/api/admin/smtp/test", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var cfg models.SmtpConfig
+		if database.DB.First(&cfg).Error != nil || !cfg.Enabled {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "SMTP not configured or disabled"})
+		}
+		uid := userIDFromLocals(c)
+		var user models.User
+		database.DB.First(&user, uid)
+		if err := sendEmail(cfg, user.Email, "Photogiraffe SMTP 测试", "SMTP 配置正常，邮件发送测试成功！"); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send email: " + err.Error()})
+		}
+		return c.JSON(fiber.Map{"message": "Test email sent to " + user.Email})
 	})
 
 	app.Post("/upload", requireJWT(), func(c *fiber.Ctx) error {

@@ -119,6 +119,11 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-sm mt-6" style={{ color: "var(--pg-text-muted)" }}>
+          <Link href="/forgot-password" className="transition-colors" style={{ color: "var(--pg-accent)" }}>
+            忘记密码？
+          </Link>
+        </p>
+        <p className="text-center text-sm mt-2" style={{ color: "var(--pg-text-muted)" }}>
           没有账户？{" "}
           <Link href="/register" className="transition-colors" style={{ color: "var(--pg-accent)" }}>
             注册

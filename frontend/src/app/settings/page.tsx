@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Save, Loader2, ArrowLeft, ChevronDown, Settings, Cpu, HardDrive, User, RefreshCw, CheckCircle } from "lucide-react";
+import { Save, Loader2, ArrowLeft, ChevronDown, Settings, Cpu, HardDrive, User, RefreshCw, CheckCircle, Mail } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
 
@@ -83,7 +83,7 @@ interface StorageConfig {
   region: string;
 }
 
-type Tab = "general" | "ai" | "storage" | "account";
+type Tab = "general" | "ai" | "storage" | "account" | "smtp";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -106,6 +106,31 @@ export default function SettingsPage() {
   const [storageMessage, setStorageMessage] = useState({ text: "", type: "" });
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
 
+  // Account — change password
+  const [pwOld, setPwOld] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwNew2, setPwNew2] = useState("");
+  const [pwMsg, setPwMsg] = useState({ text: "", type: "" });
+  const [pwSaving, setPwSaving] = useState(false);
+
+  // Account — update profile
+  const [profUsername, setProfUsername] = useState("");
+  const [profEmail, setProfEmail] = useState("");
+  const [profMsg, setProfMsg] = useState({ text: "", type: "" });
+  const [profSaving, setProfSaving] = useState(false);
+
+  // Account — login history
+  type LoginEntry = { ip: string; user_agent: string; success: boolean; at: string };
+  const [loginHistory, setLoginHistory] = useState<LoginEntry[]>([]);
+  const [histLoading, setHistLoading] = useState(false);
+
+  // SMTP Config
+  const [smtpCfg, setSmtpCfg] = useState({ host: "", port: 587, username: "", password: "", from_name: "Photogiraffe", use_tls: true, enabled: false });
+  const [smtpLoading, setSmtpLoading] = useState(false);
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpMsg, setSmtpMsg] = useState({ text: "", type: "" });
+
   const isSuperAdmin = user?.role === "SuperAdmin";
 
   useEffect(() => {
@@ -115,6 +140,13 @@ export default function SettingsPage() {
   useEffect(() => {
     if (tab === "storage" && isSuperAdmin) {
       fetchStorageConfig();
+    }
+    if (tab === "smtp" && isSuperAdmin) {
+      fetchSmtpConfig();
+    }
+    if (tab === "account") {
+      fetchLoginHistory();
+      if (user) { setProfUsername(user.username); setProfEmail(user.email); }
     }
   }, [tab, isSuperAdmin]);
 
@@ -193,10 +225,82 @@ export default function SettingsPage() {
     finally { setStorageTesting(false); }
   };
 
+  const fetchLoginHistory = async () => {
+    setHistLoading(true);
+    try {
+      const res = await authFetch("/api/auth/login-history");
+      if (res.ok) setLoginHistory(await res.json());
+    } catch { /* ignore */ }
+    finally { setHistLoading(false); }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwMsg({ text: "", type: "" });
+    if (pwNew !== pwNew2) { setPwMsg({ text: "两次密码不一致", type: "error" }); return; }
+    setPwSaving(true);
+    try {
+      const res = await authFetch("/api/auth/change-password", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ old_password: pwOld, new_password: pwNew }) });
+      const data = await res.json();
+      if (res.ok) { setPwMsg({ text: data.message || "密码已修改，请重新登录。", type: "success" }); setPwOld(""); setPwNew(""); setPwNew2(""); }
+      else setPwMsg({ text: data.error || "修改失败", type: "error" });
+    } catch { setPwMsg({ text: "请求失败", type: "error" }); }
+    finally { setPwSaving(false); }
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfMsg({ text: "", type: "" });
+    setProfSaving(true);
+    try {
+      const res = await authFetch("/api/auth/update-profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: profUsername, email: profEmail }) });
+      const data = await res.json();
+      if (res.ok) setProfMsg({ text: "个人信息已更新。", type: "success" });
+      else setProfMsg({ text: data.error || "更新失败", type: "error" });
+    } catch { setProfMsg({ text: "请求失败", type: "error" }); }
+    finally { setProfSaving(false); }
+  };
+
+  const fetchSmtpConfig = async () => {
+    setSmtpLoading(true);
+    try {
+      const res = await authFetch("/api/admin/smtp");
+      if (res.ok) {
+        const d = await res.json();
+        setSmtpCfg({ host: d.host || "", port: d.port || 587, username: d.username || "", password: "", from_name: d.from_name || "Photogiraffe", use_tls: d.use_tls ?? true, enabled: d.enabled ?? false });
+      }
+    } catch { /* ignore */ }
+    finally { setSmtpLoading(false); }
+  };
+
+  const handleSmtpSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSmtpSaving(true);
+    setSmtpMsg({ text: "", type: "" });
+    try {
+      const res = await authFetch("/api/admin/smtp", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(smtpCfg) });
+      if (res.ok) setSmtpMsg({ text: "SMTP 配置已保存。", type: "success" });
+      else { const err = await res.json(); setSmtpMsg({ text: err.error || "保存失败", type: "error" }); }
+    } catch { setSmtpMsg({ text: "请求失败", type: "error" }); }
+    finally { setSmtpSaving(false); }
+  };
+
+  const handleSmtpTest = async () => {
+    setSmtpTesting(true);
+    setSmtpMsg({ text: "", type: "" });
+    try {
+      const res = await authFetch("/api/admin/smtp/test", { method: "POST" });
+      const d = await res.json();
+      setSmtpMsg({ text: res.ok ? (d.message || "测试邮件已发送") : (d.error || "发送失败"), type: res.ok ? "success" : "error" });
+    } catch { setSmtpMsg({ text: "请求失败", type: "error" }); }
+    finally { setSmtpTesting(false); }
+  };
+
   const TABS: { key: Tab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { key: "general", label: "通用", icon: <Settings size={16} /> },
     { key: "ai", label: "AI API", icon: <Cpu size={16} /> },
     { key: "storage", label: "存储", icon: <HardDrive size={16} />, adminOnly: true },
+    { key: "smtp", label: "SMTP", icon: <Mail size={16} />, adminOnly: true },
     { key: "account", label: "账号", icon: <User size={16} /> },
   ];
 
@@ -562,28 +666,116 @@ export default function SettingsPage() {
 
         {/* Account Tab */}
         {tab === "account" && (
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
-            <h2 className="text-lg font-semibold">账号信息</h2>
-            {user && (
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between py-2 border-b border-zinc-800">
-                  <span className="text-zinc-500">用户名</span>
-                  <span className="font-medium">{user.username}</span>
+          <div className="space-y-6">
+            {/* Update Profile */}
+            <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+              <h2 className="text-base font-semibold">个人信息</h2>
+              <form onSubmit={handleUpdateProfile} className="space-y-4">
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">用户名</label>
+                  <input type="text" value={profUsername} onChange={e => setProfUsername(e.target.value)} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
                 </div>
-                <div className="flex justify-between py-2 border-b border-zinc-800">
-                  <span className="text-zinc-500">邮箱</span>
-                  <span>{user.email}</span>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">邮箱</label>
+                  <input type="email" value={profEmail} onChange={e => setProfEmail(e.target.value)} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
                 </div>
-                <div className="flex justify-between py-2">
-                  <span className="text-zinc-500">角色</span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${user.role === "SuperAdmin" ? "bg-amber-900/30 text-amber-400" : "bg-zinc-800 text-zinc-400"}`}>
-                    {user.role}
-                  </span>
+                {user && (
+                  <div className="flex items-center gap-2 text-xs text-zinc-500">
+                    <span>角色：</span>
+                    <span className={`px-2 py-0.5 rounded font-medium ${user.role === "SuperAdmin" ? "bg-amber-900/30 text-amber-400" : "bg-zinc-800 text-zinc-400"}`}>{user.role}</span>
+                  </div>
+                )}
+                {profMsg.text && <p className={`text-sm ${profMsg.type === "success" ? "text-green-400" : "text-red-400"}`}>{profMsg.text}</p>}
+                <button type="submit" disabled={profSaving} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">{profSaving ? "保存中…" : "保存信息"}</button>
+              </form>
+            </section>
+
+            {/* Change Password */}
+            <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+              <h2 className="text-base font-semibold">修改密码</h2>
+              <form onSubmit={handleChangePassword} className="space-y-4">
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">当前密码</label>
+                  <input type="password" value={pwOld} onChange={e => setPwOld(e.target.value)} autoComplete="current-password" className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
                 </div>
-              </div>
-            )}
-            <p className="text-xs text-zinc-600 pt-2">更多账号设置（修改密码等）即将推出。</p>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">新密码</label>
+                  <input type="password" value={pwNew} onChange={e => setPwNew(e.target.value)} autoComplete="new-password" className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">确认新密码</label>
+                  <input type="password" value={pwNew2} onChange={e => setPwNew2(e.target.value)} autoComplete="new-password" className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                {pwMsg.text && <p className={`text-sm ${pwMsg.type === "success" ? "text-green-400" : "text-red-400"}`}>{pwMsg.text}</p>}
+                <button type="submit" disabled={pwSaving} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">{pwSaving ? "修改中…" : "修改密码"}</button>
+              </form>
+            </section>
+
+            {/* Login History */}
+            <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-3">
+              <h2 className="text-base font-semibold">登录历史（最近 10 次）</h2>
+              {histLoading ? <p className="text-sm text-zinc-500">加载中…</p> : loginHistory.length === 0 ? <p className="text-sm text-zinc-600">暂无记录</p> : (
+                <ul className="space-y-1 text-xs text-zinc-400">
+                  {loginHistory.map((h, i) => (
+                    <li key={i} className="flex items-center gap-3 py-1.5 border-b border-zinc-800 last:border-0">
+                      <span className={h.success ? "text-green-400" : "text-red-400"}>{h.success ? "✓" : "✗"}</span>
+                      <span className="font-mono">{h.ip}</span>
+                      <span className="truncate max-w-[200px] text-zinc-600">{h.user_agent}</span>
+                      <span className="ml-auto shrink-0 text-zinc-600">{new Date(h.at).toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
+        )}
+
+        {/* SMTP Tab */}
+        {tab === "smtp" && isSuperAdmin && (
+          <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 md:p-8 space-y-6">
+            <h2 className="text-lg font-semibold">SMTP 邮件配置</h2>
+            {smtpLoading ? <p className="text-sm text-zinc-500">加载中…</p> : (
+              <form onSubmit={handleSmtpSave} className="space-y-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-sm text-zinc-500 mb-1">SMTP 主机</label>
+                    <input type="text" placeholder="smtp.gmail.com" value={smtpCfg.host} onChange={e => setSmtpCfg(p => ({...p, host: e.target.value}))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-zinc-500 mb-1">端口</label>
+                    <input type="number" value={smtpCfg.port} onChange={e => setSmtpCfg(p => ({...p, port: Number(e.target.value)}))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">用户名（发件人邮箱）</label>
+                  <input type="text" value={smtpCfg.username} onChange={e => setSmtpCfg(p => ({...p, username: e.target.value}))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">授权码 / 密码</label>
+                  <input type="password" placeholder="留空则不更改" value={smtpCfg.password} onChange={e => setSmtpCfg(p => ({...p, password: e.target.value}))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm text-zinc-500 mb-1">发件人名称</label>
+                  <input type="text" value={smtpCfg.from_name} onChange={e => setSmtpCfg(p => ({...p, from_name: e.target.value}))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={smtpCfg.use_tls} onChange={e => setSmtpCfg(p => ({...p, use_tls: e.target.checked}))} className="accent-blue-500" />
+                    STARTTLS
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={smtpCfg.enabled} onChange={e => setSmtpCfg(p => ({...p, enabled: e.target.checked}))} className="accent-blue-500" />
+                    启用邮件功能
+                  </label>
+                </div>
+                {smtpMsg.text && <p className={`text-sm ${smtpMsg.type === "success" ? "text-green-400" : "text-red-400"}`}>{smtpMsg.text}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button type="submit" disabled={smtpSaving} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">{smtpSaving ? "保存中…" : "保存配置"}</button>
+                  <button type="button" onClick={handleSmtpTest} disabled={smtpTesting || !smtpCfg.enabled} className="bg-blue-900/50 hover:bg-blue-800/60 text-blue-300 px-4 py-2 rounded-lg text-sm disabled:opacity-40">{smtpTesting ? "发送中…" : "发送测试邮件"}</button>
+                </div>
+              </form>
+            )}
+          </section>
         )}
       </div>
     </div>

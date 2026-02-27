@@ -188,3 +188,36 @@ type StorageConfig struct {
 	UseSSL    bool `gorm:"default:true"`
 	Region    string
 }
+
+// ─── Phase 22 — Account Security + SMTP ─────────────────────────────────────
+
+// SmtpConfig holds SMTP mail server settings (single row, id=1).
+type SmtpConfig struct {
+	gorm.Model
+	Host     string
+	Port     int    `gorm:"default:587"`
+	Username string
+	Password string `gorm:"type:text"` // never returned in plaintext via API
+	FromName string `gorm:"default:'Photogiraffe'"`
+	UseTLS   bool   `gorm:"default:true"` // STARTTLS
+	Enabled  bool   `gorm:"default:false"`
+}
+
+// PasswordResetToken is a one-time token for the forgot-password flow.
+// Only the SHA-256 hash is stored; the raw token is sent via email.
+type PasswordResetToken struct {
+	gorm.Model
+	UserID    uint      `gorm:"not null;index"`
+	TokenHash string    `gorm:"not null;uniqueIndex"` // SHA-256 hex
+	ExpiresAt time.Time `gorm:"not null"`
+	Used      bool      `gorm:"default:false"`
+}
+
+// LoginHistory records the last 10 login attempts per user.
+type LoginHistory struct {
+	gorm.Model
+	UserID    uint   `gorm:"not null;index"`
+	IPAddress string
+	UserAgent string `gorm:"type:text"`
+	Success   bool
+}

@@ -840,6 +840,7 @@ def main():
     test_phase19(token)
     test_phase20(token)
     test_phase21(token)
+    test_phase22(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -997,6 +998,50 @@ def test_phase21(token):
     if isinstance(d, list) and len(d) > 0:
         first = d[0]
         check("  map point has shot_at field", "shot_at" in first, f"keys={list(first.keys())}")
+
+
+def test_phase22(token):
+    section("v0.22  Account Security + SMTP")
+
+    # ── PUT /api/auth/change-password without token → 401 ──
+    _, status, _ = http("PUT", "/api/auth/change-password",
+                        body={"old_password": "x", "new_password": "y"})
+    check("PUT /api/auth/change-password without token → 401", status == 401, f"status={status}")
+
+    # ── PUT /api/auth/change-password with wrong old password → 401 ──
+    _, status, _ = http("PUT", "/api/auth/change-password", token=token,
+                        body={"old_password": "definitely_wrong_password_xyz", "new_password": "newpass123"})
+    check("PUT /api/auth/change-password wrong old pw → 401", status == 401, f"status={status}")
+
+    # ── PUT /api/auth/update-profile without token → 401 ──
+    _, status, _ = http("PUT", "/api/auth/update-profile",
+                        body={"username": "x", "email": "x@x.com"})
+    check("PUT /api/auth/update-profile without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/auth/login-history → 200, returns list ──
+    d, status, _ = http("GET", "/api/auth/login-history", token=token)
+    check("GET /api/auth/login-history → 200", status == 200, f"status={status}")
+    check("  login-history is a list", isinstance(d, list), d)
+
+    # ── POST /api/auth/forgot-password (anti-enumeration) → 200 ──
+    _, status, _ = http("POST", "/api/auth/forgot-password",
+                        body={"email": "nonexistent@example.invalid"})
+    check("POST /api/auth/forgot-password anti-enum → 200", status == 200, f"status={status}")
+
+    # ── POST /api/auth/reset-password with bad token → 410 ──
+    _, status, _ = http("POST", "/api/auth/reset-password",
+                        body={"token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                              "new_password": "newpass123"})
+    check("POST /api/auth/reset-password bad token → 410", status == 410, f"status={status}")
+
+    # ── GET /api/admin/smtp without token → 401 ──
+    _, status, _ = http("GET", "/api/admin/smtp")
+    check("GET /api/admin/smtp without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/admin/smtp as admin → 200 ──
+    d, status, _ = http("GET", "/api/admin/smtp", token=token)
+    check("GET /api/admin/smtp as admin → 200", status == 200, f"status={status}")
+    check("  smtp config has host field", isinstance(d, dict) and "host" in d, d)
 
 
 if __name__ == "__main__":
