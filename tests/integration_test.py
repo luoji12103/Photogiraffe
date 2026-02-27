@@ -841,6 +841,7 @@ def main():
     test_phase20(token)
     test_phase21(token)
     test_phase22(token)
+    test_phase23(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1042,6 +1043,41 @@ def test_phase22(token):
     d, status, _ = http("GET", "/api/admin/smtp", token=token)
     check("GET /api/admin/smtp as admin → 200", status == 200, f"status={status}")
     check("  smtp config has host field", isinstance(d, dict) and "host" in d, d)
+
+
+def test_phase23(token):
+    section("v0.23  Photo Notes + Timeline")
+
+    # ── GET /api/photos/timeline without token → 401 ──
+    _, status, _ = http("GET", "/api/photos/timeline")
+    check("GET /api/photos/timeline without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/photos/timeline → 200, returns array ──
+    d, status, _ = http("GET", "/api/photos/timeline", token=token)
+    check("GET /api/photos/timeline → 200", status == 200, f"status={status}")
+    check("  timeline is a list", isinstance(d, list), d)
+
+    # ── GET /api/photos/1/notes without token → 401 ──
+    _, status, _ = http("GET", "/api/photos/1/notes")
+    check("GET /api/photos/1/notes without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/photos/999999/notes → 404 (no such photo) ──
+    _, status, _ = http("GET", "/api/photos/999999/notes", token=token)
+    check("GET /api/photos/999999/notes → 404", status == 404, f"status={status}")
+
+    # ── POST /api/photos/999999/notes → 404 ──
+    _, status, _ = http("POST", "/api/photos/999999/notes", token=token,
+                        body={"content": "test note"})
+    check("POST /api/photos/999999/notes → 404", status == 404, f"status={status}")
+
+    # ── PUT /api/photos/1/notes/999999 → 404 (no such note) ──
+    _, status, _ = http("PUT", "/api/photos/1/notes/999999", token=token,
+                        body={"content": "updated"})
+    check("PUT /api/photos/1/notes/999999 → 404", status == 404, f"status={status}")
+
+    # ── DELETE /api/photos/1/notes/999999 → 404 ──
+    _, status, _ = http("DELETE", "/api/photos/1/notes/999999", token=token)
+    check("DELETE /api/photos/1/notes/999999 → 404", status == 404, f"status={status}")
 
 
 if __name__ == "__main__":

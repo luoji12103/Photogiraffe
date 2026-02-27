@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw, Tags } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw, Tags, StickyNote } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -14,6 +14,7 @@ import ColorSpaceIndicator from "./ColorSpaceIndicator";
 import ExportPanel from "./ExportPanel";
 import IPTCPanel from "./IPTCPanel";
 import PresetPanel from "./PresetPanel";
+import PhotoNotes from "./PhotoNotes";
 
 interface ExifData {
   CameraModel: string;
@@ -604,6 +605,15 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
                 return null;
               }
             })()}
+          </div>
+
+          {/* Phase 23 — Photo Notes */}
+          <div className="space-y-3 mt-6 pt-6 border-t border-zinc-800">
+            <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+              <StickyNote className="w-4 h-4 text-yellow-400" />
+              备注
+            </h3>
+            <PhotoNotes photoId={photo.ID} />
           </div>
         </motion.div>
       </div>

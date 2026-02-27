@@ -134,6 +134,12 @@ func userIDFromLocals(c *fiber.Ctx) uint {
 	return 0
 }
 
+// isAdmin returns true if the authenticated user has the SuperAdmin role.
+func isAdmin(c *fiber.Ctx) bool {
+	role, _ := c.Locals("userRole").(string)
+	return role == "SuperAdmin"
+}
+
 // ── AI Rate-Limit helpers ────────────────────────────────────────────────────
 
 // aiRatePeriodKey returns a stable string key for the current time window so
@@ -842,6 +848,161 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send email: " + err.Error()})
 		}
 		return c.JSON(fiber.Map{"message": "Test email sent to " + user.Email})
+	})
+
+	// ─── Phase 23 — Photo Notes + Timeline ───────────────────────────────────
+
+	// GET /api/photos/:id/notes — list notes for a photo
+	app.Get("/api/photos/:id/notes", requireJWT(), func(c *fiber.Ctx) error {
+		photoID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		uid := userIDFromLocals(c)
+		// Verify photo ownership or admin
+		var photo models.Photo
+		if err := database.DB.First(&photo, photoID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		if photo.UserID != uid && !isAdmin(c) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var notes []models.PhotoNote
+		database.DB.Where("photo_id = ?", photoID).Order("created_at asc").Find(&notes)
+		type NoteResp struct {
+			ID        uint      `json:"id"`
+			Content   string    `json:"content"`
+			UserID    uint      `json:"user_id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		out := make([]NoteResp, len(notes))
+		for i, n := range notes {
+			out[i] = NoteResp{ID: n.ID, Content: n.Content, UserID: n.UserID, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+		}
+		return c.JSON(out)
+	})
+
+	// POST /api/photos/:id/notes — create a note
+	app.Post("/api/photos/:id/notes", requireJWT(), func(c *fiber.Ctx) error {
+		photoID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		uid := userIDFromLocals(c)
+		var photo models.Photo
+		if err := database.DB.First(&photo, photoID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		if photo.UserID != uid && !isAdmin(c) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "content required"})
+		}
+		note := models.PhotoNote{PhotoID: uint(photoID), UserID: uid, Content: strings.TrimSpace(req.Content)}
+		database.DB.Create(&note)
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": note.ID, "content": note.Content, "created_at": note.CreatedAt})
+	})
+
+	// PUT /api/photos/:id/notes/:noteId — update a note
+	app.Put("/api/photos/:id/notes/:noteId", requireJWT(), func(c *fiber.Ctx) error {
+		noteID, err := strconv.ParseUint(c.Params("noteId"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid note id"})
+		}
+		uid := userIDFromLocals(c)
+		var note models.PhotoNote
+		if err := database.DB.First(&note, noteID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "note not found"})
+		}
+		if note.UserID != uid && !isAdmin(c) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "content required"})
+		}
+		database.DB.Model(&note).Update("content", strings.TrimSpace(req.Content))
+		return c.JSON(fiber.Map{"id": note.ID, "content": note.Content, "updated_at": note.UpdatedAt})
+	})
+
+	// DELETE /api/photos/:id/notes/:noteId — delete a note
+	app.Delete("/api/photos/:id/notes/:noteId", requireJWT(), func(c *fiber.Ctx) error {
+		noteID, err := strconv.ParseUint(c.Params("noteId"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid note id"})
+		}
+		uid := userIDFromLocals(c)
+		var note models.PhotoNote
+		if err := database.DB.First(&note, noteID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "note not found"})
+		}
+		if note.UserID != uid && !isAdmin(c) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		database.DB.Delete(&note)
+		return c.JSON(fiber.Map{"message": "deleted"})
+	})
+
+	// GET /api/photos/timeline — photos grouped by year-month, sorted newest first
+	app.Get("/api/photos/timeline", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var photos []models.Photo
+		database.DB.Where("user_id = ? AND status = ?", uid, "completed").
+			Preload("ExifData").
+			Order("uploaded_at desc").
+			Find(&photos)
+
+		type TimelinePhoto struct {
+			ID               uint      `json:"id"`
+			OriginalFilename string    `json:"original_filename"`
+			ThumbnailURL     string    `json:"thumbnail_url"`
+			ShotAt           string    `json:"shot_at"`
+			UploadedAt       time.Time `json:"uploaded_at"`
+		}
+		type MonthGroup struct {
+			YearMonth string          `json:"year_month"` // "2024-03"
+			Photos    []TimelinePhoto `json:"photos"`
+		}
+		groupMap := map[string]*MonthGroup{}
+		var order []string
+		for _, p := range photos {
+			// Parse DateTimeOriginal (EXIF format "2006:01:02 15:04:05")
+			shotAt := ""
+			var shotKey string
+			if p.ExifData.DateTimeOriginal != "" {
+				if t, err := time.Parse("2006:01:02 15:04:05", p.ExifData.DateTimeOriginal); err == nil {
+					shotAt = t.Format("2006-01-02T15:04:05Z")
+					shotKey = t.Format("2006-01")
+				}
+			}
+			if shotKey == "" {
+				shotKey = p.UploadedAt.Format("2006-01")
+			}
+			if _, exists := groupMap[shotKey]; !exists {
+				groupMap[shotKey] = &MonthGroup{YearMonth: shotKey, Photos: []TimelinePhoto{}}
+				order = append(order, shotKey)
+			}
+			tp := TimelinePhoto{
+				ID:               p.ID,
+				OriginalFilename: p.OriginalFilename,
+				ThumbnailURL:     fmt.Sprintf("/api/photos/%d/thumbnail", p.ID),
+				ShotAt:           shotAt,
+				UploadedAt:       p.UploadedAt,
+			}
+			groupMap[shotKey].Photos = append(groupMap[shotKey].Photos, tp)
+		}
+		result := make([]MonthGroup, 0, len(order))
+		for _, k := range order {
+			result = append(result, *groupMap[k])
+		}
+		return c.JSON(result)
 	})
 
 	app.Post("/upload", requireJWT(), func(c *fiber.Ctx) error {

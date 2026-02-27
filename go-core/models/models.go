@@ -221,3 +221,14 @@ type LoginHistory struct {
 	UserAgent string `gorm:"type:text"`
 	Success   bool
 }
+
+// ─── Phase 23 — Photo Notes + Timeline ──────────────────────────────────────
+
+// PhotoNote is a timestamped text note attached to a photo by any user who
+// has access to it. Multiple notes per photo are allowed.
+type PhotoNote struct {
+	gorm.Model
+	PhotoID uint   `gorm:"not null;index"`
+	UserID  uint   `gorm:"not null;index"`
+	Content string `gorm:"type:text;not null"`
+}
