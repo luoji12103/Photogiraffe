@@ -2361,6 +2361,96 @@ func main() {
 		return c.JSON(fiber.Map{"deleted": result.RowsAffected})
 	})
 
+	// ─── Phase 26 — Unified Bulk Operations ───────────────────────────────────
+	// POST /api/photos/bulk — handles: set_public, set_private, add_tag, remove_tag, star, unstar
+	app.Post("/api/photos/bulk", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			IDs    []uint `json:"ids"`
+			Action string `json:"action"`
+			Tag    string `json:"tag"` // for add_tag / remove_tag
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 || body.Action == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids and action required"})
+		}
+		if len(body.IDs) > 200 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "maximum 200 photos per bulk operation"})
+		}
+
+		switch body.Action {
+		case "set_public", "set_private":
+			isPublic := body.Action == "set_public"
+			q := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
+			if role != "SuperAdmin" {
+				q = q.Where("user_id = ?", uid)
+			}
+			res := q.Update("is_public", isPublic)
+			return c.JSON(fiber.Map{"action": body.Action, "count": res.RowsAffected})
+
+		case "add_tag", "remove_tag":
+			if body.Tag == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tag required for add_tag/remove_tag"})
+			}
+			q := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
+			if role != "SuperAdmin" {
+				q = q.Where("user_id = ?", uid)
+			}
+			var photos []models.Photo
+			q.Find(&photos)
+			updated := int64(0)
+			for _, p := range photos {
+				var tags []string
+				if p.Tags != nil {
+					_ = json.Unmarshal([]byte(*p.Tags), &tags)
+				}
+				if body.Action == "add_tag" {
+					found := false
+					for _, t := range tags {
+						if t == body.Tag {
+							found = true
+							break
+						}
+					}
+					if !found {
+						tags = append(tags, body.Tag)
+					}
+				} else {
+					filtered := make([]string, 0, len(tags))
+					for _, t := range tags {
+						if t != body.Tag {
+							filtered = append(filtered, t)
+						}
+					}
+					tags = filtered
+				}
+				if len(tags) == 0 {
+					database.DB.Model(&p).Update("tags", nil)
+				} else {
+					b, _ := json.Marshal(tags)
+					bs := string(b)
+					database.DB.Model(&p).Update("tags", &bs)
+				}
+				updated++
+			}
+			return c.JSON(fiber.Map{"action": body.Action, "tag": body.Tag, "count": updated})
+
+		case "star":
+			for _, pid := range body.IDs {
+				fav := models.Favorite{UserID: uid, PhotoID: pid}
+				database.DB.Where(fav).FirstOrCreate(&fav)
+			}
+			return c.JSON(fiber.Map{"action": "star", "count": len(body.IDs)})
+
+		case "unstar":
+			result := database.DB.Where("user_id = ? AND photo_id IN ?", uid, body.IDs).Delete(&models.Favorite{})
+			return c.JSON(fiber.Map{"action": "unstar", "count": result.RowsAffected})
+
+		default:
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown action: " + body.Action})
+		}
+	})
+
 	// POST /api/photos/bulk-album — add multiple photos to an album
 	app.Post("/api/photos/bulk-album", requireJWT(), func(c *fiber.Ctx) error {
 		uid := userIDFromLocals(c)

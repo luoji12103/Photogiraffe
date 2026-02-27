@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import PhotoGrid from "@/components/PhotoGrid";
 import UploadPanel from "@/components/UploadPanel";
+import BulkActionBar from "@/components/BulkActionBar";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutGrid, Columns, ChevronDown, Camera, Loader2 } from "lucide-react";
+import { LayoutGrid, Columns, ChevronDown, Camera, Loader2, CheckSquare } from "lucide-react";
 
 const PAGE_LIMIT = 24;
 const SCROLL_KEY = "pg-gallery-scroll";
@@ -85,6 +86,10 @@ export default function Home() {
   const [sort, setSort]             = useState<SortOption>("date_desc");
   const [layout, setLayout]         = useState<LayoutOption>("grid");
   const [colorBucket, setColorBucket] = useState<ColorBucket | "">("");
+
+  // Phase 26 — Bulk select mode
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // Ref for the IntersectionObserver sentinel
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -187,6 +192,23 @@ export default function Home() {
     localStorage.setItem("pg-gallery-layout", l);
   };
 
+  // Phase 26 — bulk select helpers
+  const handleToggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const handleSelectAll = () => setSelectedIds(new Set(photos.map((p) => p.ID)));
+  const handleDeselectAll = () => { setSelectedIds(new Set()); };
+  const toggleSelectMode = () => {
+    setSelectMode((v) => {
+      if (v) setSelectedIds(new Set()); // clear selections on exit
+      return !v;
+    });
+  };
+
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8" style={{ color: "var(--pg-text-primary)" }}>
       {/* Header */}
@@ -207,6 +229,19 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          {/* Phase 26 — Select Mode Toggle */}
+          <button
+            onClick={toggleSelectMode}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all"
+            style={{
+              background: selectMode ? "var(--pg-accent-soft)" : "var(--pg-bg-elevated)",
+              color: selectMode ? "var(--pg-accent)" : "var(--pg-text-secondary)",
+              border: `1px solid ${selectMode ? "var(--pg-accent)" : "var(--pg-border)"}`,
+            }}
+          >
+            <CheckSquare size={15} />
+            <span className="hidden sm:inline">{selectMode ? `已选 ${selectedIds.size}` : "多选"}</span>
+          </button>
           <UploadPanel onUploadComplete={() => { setPhotos([]); fetchPage(1, sort, false); }} />
         </div>
       </motion.header>
@@ -310,7 +345,14 @@ export default function Home() {
           <EmptyGallery onUpload={() => { setPhotos([]); fetchPage(1, sort, false); }} />
         ) : (
           <>
-            <PhotoGrid photos={photos} loading={loading} layout={layout} />
+            <PhotoGrid
+              photos={photos}
+              loading={loading}
+              layout={layout}
+              selectable={selectMode}
+              selectedIds={selectedIds}
+              onToggle={handleToggleSelect}
+            />
 
             {/* Sentinel + loading-more indicator */}
             <div ref={sentinelRef} className="h-12 flex items-center justify-center mt-4">
@@ -334,6 +376,17 @@ export default function Home() {
           </>
         )}
       </main>
+
+      {/* Phase 26 — Bulk Action Bar */}
+      {selectMode && (
+        <BulkActionBar
+          selectedIds={selectedIds}
+          totalPhotos={photos.length}
+          onSelectAll={handleSelectAll}
+          onDeselectAll={handleDeselectAll}
+          onRefresh={() => { setSelectedIds(new Set()); setPhotos([]); fetchPage(1, sort, false); }}
+        />
+      )}
     </div>
   );
 }

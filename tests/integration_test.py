@@ -845,6 +845,7 @@ def main():
     test_phase23(token)
     test_phase24()
     test_phase25(token)
+    test_phase26(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1177,5 +1178,73 @@ def test_phase25(token):
 
 
 
+def test_phase26(token):
+    section("v0.26  Bulk Operations (Unified /api/photos/bulk)")
+
+    # ── Unauthenticated access is denied ──
+    _, status, _ = http("POST", "/api/photos/bulk")
+    check("POST /api/photos/bulk without token → 401", status == 401, f"status={status}")
+
+    # ── Empty IDs returns 400 ──
+    _, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [], "action": "set_public"})
+    check("POST /api/photos/bulk empty ids → 400", status == 400, f"status={status}")
+
+    # ── Unknown action returns 400 ──
+    _, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [1], "action": "invalid_action"})
+    check("POST /api/photos/bulk unknown action → 400", status == 400, f"status={status}")
+
+    # ── set_public on nonexistent photo → 200 (0 rows affected) ──
+    d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [9999999], "action": "set_public"})
+    check("POST /api/photos/bulk set_public unknown photo → 200", status == 200, f"status={status}")
+    check("set_public response has 'action' key", isinstance(d, dict) and "action" in d, d)
+
+    # ── set_private simlarly ──
+    d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [9999999], "action": "set_private"})
+    check("POST /api/photos/bulk set_private → 200", status == 200, f"status={status}")
+
+    # ── add_tag requires tag param ──
+    _, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [1], "action": "add_tag", "tag": ""})
+    check("POST /api/photos/bulk add_tag empty tag → 400", status == 400, f"status={status}")
+
+    # ── star/unstar on nonexistent photo IDs → 200 ──
+    d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [9999998, 9999999], "action": "star"})
+    check("POST /api/photos/bulk star → 200", status == 200, f"status={status}")
+    check("star response has 'count' key", isinstance(d, dict) and "count" in d, d)
+
+    d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                        body={"ids": [9999998, 9999999], "action": "unstar"})
+    check("POST /api/photos/bulk unstar → 200", status == 200, f"status={status}")
+
+    # ── Find a real photo and test add_tag / remove_tag ──
+    photos_d, status, _ = http("GET", "/api/photos", token=token)
+    photo_id = None
+    if status == 200 and isinstance(photos_d, dict) and photos_d.get("photos"):
+        photo_id = photos_d["photos"][0]["ID"]
+    elif status == 200 and isinstance(photos_d, list) and photos_d:
+        photo_id = photos_d[0]["ID"]
+
+    if photo_id:
+        # add_tag
+        d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                            body={"ids": [photo_id], "action": "add_tag", "tag": "bulk-test"})
+        check(f"POST /api/photos/bulk add_tag on photo → 200", status == 200, f"status={status}")
+        check("add_tag response has 'tag' key", isinstance(d, dict) and "tag" in d, d)
+        check("add_tag response tag matches", d.get("tag") == "bulk-test", d)
+
+        # remove_tag
+        d, status, _ = http("POST", "/api/photos/bulk", token=token,
+                            body={"ids": [photo_id], "action": "remove_tag", "tag": "bulk-test"})
+        check(f"POST /api/photos/bulk remove_tag on photo → 200", status == 200, f"status={status}")
+    else:
+        print(f"  {SKIP} Phase 26 tag tests (no photos found)")
+
+
 if __name__ == "__main__":
     main()
+
