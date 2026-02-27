@@ -1,12 +1,14 @@
 {
   "name": "Photogiraffe Gallery",
   "short_name": "Photogiraffe",
-  "description": "Your high-quality photo management platform",
+  "description": "专业级照片管理平台 — 上传、整理、分析、分享你的高质量照片",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#09090b",
   "orientation": "portrait-primary",
+  "lang": "zh-CN",
   "icons": [
     {
       "src": "/icons/icon.svg",
@@ -22,5 +24,36 @@
     }
   ],
   "categories": ["photo", "productivity"],
-  "screenshots": []
+  "shortcuts": [
+    {
+      "name": "上传照片",
+      "short_name": "上传",
+      "description": "上传新照片",
+      "url": "/?upload=1",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "时间轴",
+      "short_name": "时间轴",
+      "description": "按时间浏览照片",
+      "url": "/timeline",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "地图",
+      "short_name": "地图",
+      "description": "查看照片拍摄地点",
+      "url": "/map",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "相册",
+      "short_name": "相册",
+      "description": "管理相册",
+      "url": "/albums",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any" }]
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
 }

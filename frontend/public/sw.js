@@ -1,12 +1,12 @@
-// Photogiraffe Service Worker — v6.2
+// Photogiraffe Service Worker — v7.0
 // Strategy:
 //   - Static assets (/_next/static, /icons): Cache First (immutable)
-//   - Proxy images (/api/image): Cache First with 7-day TTL
+//   - Proxy images (/api/image, /api/photos/.../thumbnail): Cache First with 7-day TTL
 //   - Auth endpoints (/api/auth): Network Only (never cache)
 //   - Other API calls: Network First, fall back to cache
-//   - Navigation: Network First, fall back to cached offline page
+//   - Navigation: Network First, fall back to /offline.html
 
-const CACHE_VERSION = "v6.2";
+const CACHE_VERSION = "v7.0";
 const STATIC_CACHE = `pg-static-${CACHE_VERSION}`;
 const IMAGE_CACHE = `pg-images-${CACHE_VERSION}`;
 const API_CACHE = `pg-api-${CACHE_VERSION}`;
@@ -15,6 +15,7 @@ const STATIC_ASSETS = [
   "/",
   "/manifest.json",
   "/icons/icon.svg",
+  "/offline.html",
 ];
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -56,8 +57,8 @@ self.addEventListener("fetch", (event) => {
     return; // pass through
   }
 
-  // Proxy images — Cache First (long-lived MinIO presigned URLs)
-  if (url.pathname.startsWith("/api/image")) {
+  // Proxy images — Cache First (long-lived MinIO presigned URLs + thumbnails)
+  if (url.pathname.startsWith("/api/image") || url.pathname.includes("/thumbnail")) {
     event.respondWith(cacheFirst(request, IMAGE_CACHE, 7 * 24 * 60 * 60));
     return;
   }
@@ -116,8 +117,10 @@ async function networkFirst(request, cacheName) {
     if (cached) return cached;
     // Offline fallback for navigation
     if (request.mode === "navigate") {
-      const offlinePage = await cache.match("/");
+      const offlinePage = await caches.match("/offline.html");
       if (offlinePage) return offlinePage;
+      const rootPage = await cache.match("/");
+      if (rootPage) return rootPage;
     }
     throw new Error("Network error and no cache available");
   }

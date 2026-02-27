@@ -13,8 +13,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Aperture, LogOut, Settings, Shield, MapPin, Images,
   UserCircle, Search, LayoutDashboard, Sun, Moon, Monitor,
-  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download,
+  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download, CalendarDays,
 } from "lucide-react";
+import InstallPrompt from "./InstallPrompt";
 
 const PUBLIC_PATHS = ["/login", "/register", "/share/", "/p/"];
 
@@ -30,6 +31,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", icon: ImageIcon, label: "画廊", mobile: true },
   { href: "/search", icon: Search, label: "搜索", mobile: true },
+  { href: "/timeline", icon: CalendarDays, label: "时间轴", mobile: false },
   { href: "/dashboard", icon: LayoutDashboard, label: "仪表盘", mobile: false },
   { href: "/albums", icon: Images, label: "相册", mobile: true },
   { href: "/map", icon: MapPin, label: "地图", mobile: false },
@@ -426,6 +428,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <InnerLayout>{children}</InnerLayout>
           <ToastContainer />
           <SSEListener />
+          <InstallPrompt />
         </ToastProvider>
       </AuthProvider>
     </ThemeProvider>

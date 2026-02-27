@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>离线 — Photogiraffe</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      min-height:100vh;display:flex;align-items:center;justify-content:center;
+      background:#09090b;color:#a1a1aa;font-family:system-ui,sans-serif;padding:2rem;
+    }
+    .card{
+      text-align:center;max-width:360px;width:100%;
+      background:#18181b;border:1px solid #27272a;border-radius:1rem;
+      padding:2.5rem 2rem;
+    }
+    .icon{font-size:3rem;margin-bottom:1.25rem;opacity:.7}
+    h1{color:#f4f4f5;font-size:1.375rem;font-weight:600;margin-bottom:.75rem}
+    p{font-size:.875rem;line-height:1.6;color:#71717a}
+    .btn{
+      display:inline-block;margin-top:1.5rem;padding:.625rem 1.5rem;
+      background:#3f3f46;color:#f4f4f5;border:none;border-radius:.5rem;
+      font-size:.875rem;cursor:pointer;text-decoration:none;
+      transition:background .15s;
+    }
+    .btn:hover{background:#52525b}
+    .app-name{
+      display:flex;align-items:center;justify-content:center;gap:.5rem;
+      margin-bottom:2rem;color:#71717a;font-size:.875rem;
+    }
+    .dot{width:.5rem;height:.5rem;background:#3b82f6;border-radius:50%}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="app-name">
+      <div class="dot"></div>
+      Photogiraffe
+    </div>
+    <div class="icon">📷</div>
+    <h1>网络连接已断开</h1>
+    <p>
+      你目前处于离线状态。<br>
+      请检查网络连接后重试。<br><br>
+      已缓存的页面和图片仍可浏览。
+    </p>
+    <a href="/" class="btn" onclick="window.location.reload();return false;">重新加载</a>
+  </div>
+</body>
+</html>

@@ -842,6 +842,7 @@ def main():
     test_phase21(token)
     test_phase22(token)
     test_phase23(token)
+    test_phase24()
 
     # Summary
     total = len(passes) + len(failures)
@@ -1078,6 +1079,29 @@ def test_phase23(token):
     # ── DELETE /api/photos/1/notes/999999 → 404 ──
     _, status, _ = http("DELETE", "/api/photos/1/notes/999999", token=token)
     check("DELETE /api/photos/1/notes/999999 → 404", status == 404, f"status={status}")
+
+
+def test_phase24():
+    section("v0.24  PWA Improvements (frontend)")
+    # Phase 24 is primarily frontend (manifest, sw.js, offline page, InstallPrompt).
+    # We validate backend-reachable checks only.
+
+    # ── All auth endpoints still respond correctly ──
+    _, status, _ = http("GET", "/api/auth/me")
+    check("GET /api/auth/me without token → 401 (regression)", status == 401, f"status={status}")
+
+    # ── Timeline endpoint still available ──
+    _, status, _ = http("GET", "/api/photos/timeline")
+    check("GET /api/photos/timeline without token → 401 (regression)", status == 401, f"status={status}")
+
+    # ── Admin SMTP endpoint still available ──
+    _, status, _ = http("GET", "/api/admin/smtp")
+    check("GET /api/admin/smtp without token → 401 (regression)", status == 401, f"status={status}")
+
+    # ── Forgot password (public endpoint) still 200 ──
+    _, status, _ = http("POST", "/api/auth/forgot-password",
+                        body={"email": "test@example.invalid"})
+    check("POST /api/auth/forgot-password public endpoint → 200 (regression)", status == 200, f"status={status}")
 
 
 if __name__ == "__main__":
