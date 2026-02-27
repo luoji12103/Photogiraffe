@@ -35,12 +35,21 @@ export default function PhotoPage() {
   const params = useParams<{ id: string }>();
   const { authFetch } = useAuth();
   const [photo, setPhoto] = useState<Photo | null>(null);
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [favoriteCount, setFavoriteCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     authFetch(`/api/photos/${params.id}`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setPhoto(data))
+      .then((data) => {
+        if (data) {
+          // New shape: { photo: Photo, is_favorited: bool, favorite_count: number }
+          setPhoto(data.photo ?? data);
+          setIsFavorited(data.is_favorited ?? false);
+          setFavoriteCount(data.favorite_count ?? 0);
+        }
+      })
       .finally(() => setLoading(false));
   }, [params.id, authFetch]);
 
@@ -62,7 +71,16 @@ export default function PhotoPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <PhotoDetail photo={photo} />
+      <PhotoDetail
+        photo={photo}
+        isFavorited={isFavorited}
+        favoriteCount={favoriteCount}
+        onFavoriteChange={(faved, count) => {
+          setIsFavorited(faved);
+          setFavoriteCount(count);
+        }}
+      />
     </div>
   );
 }
+

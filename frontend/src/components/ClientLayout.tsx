@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Aperture, LogOut, Settings, Shield, MapPin, Images,
   UserCircle, Search, LayoutDashboard, Sun, Moon, Monitor,
-  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download, CalendarDays,
+  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download, CalendarDays, Heart,
 } from "lucide-react";
 import InstallPrompt from "./InstallPrompt";
 
@@ -31,6 +31,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", icon: ImageIcon, label: "画廊", mobile: true },
   { href: "/search", icon: Search, label: "搜索", mobile: true },
+  { href: "/favorites", icon: Heart, label: "收藏", mobile: true },
   { href: "/timeline", icon: CalendarDays, label: "时间轴", mobile: false },
   { href: "/dashboard", icon: LayoutDashboard, label: "仪表盘", mobile: false },
   { href: "/albums", icon: Images, label: "相册", mobile: true },

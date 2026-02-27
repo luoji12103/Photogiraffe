@@ -1005,6 +1005,117 @@ func main() {
 		return c.JSON(result)
 	})
 
+	// ─── Phase 25 — Favorites ─────────────────────────────────────────────────
+
+	// GET /api/photos/favorites — paginated list of photos the current user has favorited
+	app.Get("/api/photos/favorites", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		page := c.QueryInt("page", 1)
+		if page < 1 {
+			page = 1
+		}
+		limit := c.QueryInt("limit", 20)
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		var total int64
+		database.DB.Model(&models.Favorite{}).Where("user_id = ?", uid).Count(&total)
+
+		var favs []models.Favorite
+		database.DB.Where("user_id = ?", uid).Order("created_at desc").Limit(limit).Offset(offset).Find(&favs)
+
+		photoIDs := make([]uint, 0, len(favs))
+		for _, f := range favs {
+			photoIDs = append(photoIDs, f.PhotoID)
+		}
+
+		type PhotoWithFavResp struct {
+			models.Photo
+			IsFavorited bool `json:"is_favorited"`
+		}
+
+		photoResp := make([]PhotoWithFavResp, 0)
+		if len(photoIDs) > 0 {
+			var photos []models.Photo
+			database.DB.Where("id IN ?", photoIDs).Preload("ExifData").Find(&photos)
+			photoMap := map[uint]models.Photo{}
+			for _, p := range photos {
+				photoMap[p.ID] = p
+			}
+			for _, f := range favs {
+				if p, ok := photoMap[f.PhotoID]; ok {
+					photoResp = append(photoResp, PhotoWithFavResp{Photo: p, IsFavorited: true})
+				}
+			}
+		}
+
+		totalPages := int((total + int64(limit) - 1) / int64(limit))
+		return c.JSON(fiber.Map{
+			"photos":       photoResp,
+			"total":        total,
+			"page":         page,
+			"limit":        limit,
+			"total_pages":  totalPages,
+		})
+	})
+
+	// POST /api/photos/:id/favorite — add a favorite
+	app.Post("/api/photos/:id/favorite", requireJWT(), func(c *fiber.Ctx) error {
+		photoIDParsed, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		uid := userIDFromLocals(c)
+		var photo models.Photo
+		if err := database.DB.First(&photo, photoIDParsed).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		// Must be own photo OR a public photo
+		if photo.UserID != uid && !photo.IsPublic {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "can only favorite public photos by others"})
+		}
+		fav := models.Favorite{UserID: uid, PhotoID: uint(photoIDParsed)}
+		result := database.DB.Where(fav).FirstOrCreate(&fav)
+		alreadyExisted := result.RowsAffected == 0
+		var count int64
+		database.DB.Model(&models.Favorite{}).Where("photo_id = ?", photoIDParsed).Count(&count)
+		return c.JSON(fiber.Map{"favorited": true, "already_existed": alreadyExisted, "count": count})
+	})
+
+	// DELETE /api/photos/:id/favorite — remove a favorite
+	app.Delete("/api/photos/:id/favorite", requireJWT(), func(c *fiber.Ctx) error {
+		photoIDParsed, err := strconv.ParseUint(c.Params("id"), 10, 64)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		uid := userIDFromLocals(c)
+		database.DB.Where("user_id = ? AND photo_id = ?", uid, photoIDParsed).Delete(&models.Favorite{})
+		var count int64
+		database.DB.Model(&models.Favorite{}).Where("photo_id = ?", photoIDParsed).Count(&count)
+		return c.JSON(fiber.Map{"favorited": false, "count": count})
+	})
+
+	// GET /api/photos/:id/favorite/count — public total favorite count for a photo
+	app.Get("/api/photos/:id/favorite/count", requireJWT(), func(c *fiber.Ctx) error {
+		photoIDStr := c.Params("id")
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var photo models.Photo
+		if err := database.DB.First(&photo, photoIDStr).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		if photo.UserID != uid && !photo.IsPublic && role != "SuperAdmin" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var count int64
+		database.DB.Model(&models.Favorite{}).Where("photo_id = ?", photo.ID).Count(&count)
+		var ownFav int64
+		database.DB.Model(&models.Favorite{}).Where("user_id = ? AND photo_id = ?", uid, photo.ID).Count(&ownFav)
+		return c.JSON(fiber.Map{"count": count, "is_favorited": ownFav > 0})
+	})
+
 	app.Post("/upload", requireJWT(), func(c *fiber.Ctx) error {
 		// Parse the multipart form
 		file, err := c.FormFile("image")
@@ -1257,8 +1368,32 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch photos"})
 		}
 
+		// Bulk-fetch which photos the requester has favorited
+		photoIDs := make([]uint, len(photos))
+		for i, p := range photos {
+			photoIDs[i] = p.ID
+		}
+		favSet := map[uint]bool{}
+		if len(photoIDs) > 0 {
+			var favPhotoIDs []uint
+			database.DB.Model(&models.Favorite{}).
+				Where("user_id = ? AND photo_id IN ?", uid, photoIDs).
+				Pluck("photo_id", &favPhotoIDs)
+			for _, id := range favPhotoIDs {
+				favSet[id] = true
+			}
+		}
+		type PhotoWithFav struct {
+			models.Photo
+			IsFavorited bool `json:"is_favorited"`
+		}
+		photoResp := make([]PhotoWithFav, len(photos))
+		for i, p := range photos {
+			photoResp[i] = PhotoWithFav{Photo: p, IsFavorited: favSet[p.ID]}
+		}
+
 		return c.JSON(fiber.Map{
-			"photos":      photos,
+			"photos":      photoResp,
 			"total":       total,
 			"page":        page,
 			"limit":       limit,
@@ -1279,7 +1414,12 @@ func main() {
 		if role != "SuperAdmin" && photo.UserID != uid {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
-		return c.JSON(photo)
+		// Check if this viewer has favorited this photo
+		var favCount int64
+		database.DB.Model(&models.Favorite{}).Where("user_id = ? AND photo_id = ?", uid, photo.ID).Count(&favCount)
+		var totalFavCount int64
+		database.DB.Model(&models.Favorite{}).Where("photo_id = ?", photo.ID).Count(&totalFavCount)
+		return c.JSON(fiber.Map{"photo": photo, "is_favorited": favCount > 0, "favorite_count": totalFavCount})
 	})
 
 	// API to get AI Config

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw, Tags, StickyNote } from "lucide-react";
+import { X, Camera, Aperture, Zap, MapPin, Calendar, Sparkles, Loader2, Palette, Cpu, Pencil, EyeOff, RefreshCw, Tags, StickyNote, Heart } from "lucide-react";
 import { useRawDecoder, isRawFile } from "../lib/useRawDecoder";
 import { DEFAULT_ADJUST, type AdjustParams } from "../lib/gl-renderer";
 import { useDisplayDetect } from "../lib/display-detect";
@@ -53,11 +53,17 @@ interface Photo {
 
 interface PhotoDetailProps {
   photo: Photo;
+  isFavorited?: boolean;
+  favoriteCount?: number;
+  onFavoriteChange?: (isFavorited: boolean, count: number) => void;
 }
 
-export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
+export default function PhotoDetail({ photo: initialPhoto, isFavorited: initialFavorited = false, favoriteCount: initialCount = 0, onFavoriteChange }: PhotoDetailProps) {
   const router = useRouter();
   const [photo, setPhoto] = useState<Photo>(initialPhoto);
+  const [favorited, setFavorited] = useState(initialFavorited);
+  const [favCount, setFavCount] = useState(initialCount);
+  const [favLoading, setFavLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [isInferring, setIsInferring] = useState(false);
@@ -80,6 +86,25 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
       router.back();
     } else {
       router.push("/");
+    }
+  };
+
+  const handleToggleFavorite = async () => {
+    if (favLoading) return;
+    setFavLoading(true);
+    try {
+      const method = favorited ? "DELETE" : "POST";
+      const res = await authFetch(`/api/photos/${photo.ID}/favorite`, { method });
+      if (res.ok) {
+        const data = await res.json();
+        const newFaved = !favorited;
+        const newCount = data.count ?? (newFaved ? favCount + 1 : Math.max(0, favCount - 1));
+        setFavorited(newFaved);
+        setFavCount(newCount);
+        onFavoriteChange?.(newFaved, newCount);
+      }
+    } finally {
+      setFavLoading(false);
     }
   };
 
@@ -265,6 +290,22 @@ export default function PhotoDetail({ photo: initialPhoto }: PhotoDetailProps) {
           {editMode ? "退出编辑" : "编辑"}
         </button>
       )}
+
+      {/* Favorite Toggle Button */}
+      <button
+        onClick={handleToggleFavorite}
+        disabled={favLoading}
+        className="absolute top-6 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+        style={{
+          right: canEdit ? "9rem" : "5rem",
+          background: favorited ? "rgba(244,63,94,0.85)" : "rgba(39,39,42,0.80)",
+          color: favorited ? "#fff" : "#d4d4d8",
+        }}
+        title={favorited ? "取消收藏" : "收藏"}
+      >
+        <Heart size={14} className={favorited ? "fill-white" : ""} />
+        <span>{favCount > 0 ? favCount : ""}</span>
+      </button>
 
       <div className="w-full h-full flex flex-col md:flex-row">
         {/* Image Section */}

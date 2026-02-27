@@ -232,3 +232,13 @@ type PhotoNote struct {
 	UserID  uint   `gorm:"not null;index"`
 	Content string `gorm:"type:text;not null"`
 }
+
+// ─── Phase 25 — Favorites / Stars ────────────────────────────────────────────
+
+// Favorite records that a user has starred a photo (including public photos
+// by other users). The (UserID, PhotoID) pair is unique.
+type Favorite struct {
+	gorm.Model
+	UserID  uint `gorm:"not null;uniqueIndex:idx_fav_user_photo"`
+	PhotoID uint `gorm:"not null;uniqueIndex:idx_fav_user_photo;index"`
+}

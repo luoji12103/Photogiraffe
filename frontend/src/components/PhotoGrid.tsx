@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useRef, useState, useEffect } from "react";
-import { CheckCircle2, Circle } from "lucide-react";
+import { CheckCircle2, Circle, Heart } from "lucide-react";
 
 interface Photo {
   ID: number;
@@ -13,6 +13,7 @@ interface Photo {
   Status: string;
   UploadedAt: string;
   DominantColors?: string | null; // JSON [{hex,bucket,pct},...]
+  IsFavorited?: boolean; // Phase 25: comes from PhotoWithFav wrapper
 }
 
 interface PhotoGridProps {
@@ -158,6 +159,13 @@ function PhotoCard({
           return null;
         })()}
       </div>
+
+      {/* Favorite badge */}
+      {!selectable && photo.IsFavorited && (
+        <div className="absolute top-2 left-2 z-10 pointer-events-none">
+          <Heart className="w-4 h-4 drop-shadow-md" style={{ fill: "#f43f5e", color: "#f43f5e" }} />
+        </div>
+      )}
 
       {/* Selection indicator */}
       {selectable && (

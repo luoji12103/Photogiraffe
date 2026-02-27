@@ -5,7 +5,8 @@ Photogiraffe Integration Test Suite
           v9.1 Export Overlays, v9.2 Photo Visibility, v9.3 Bulk Ops, v9.4 Description+Tags,
           v9.5 Public Portfolio,
           v10.1 Admin Stats+User Mgmt, v10.2 XMP Parser, v10.3 Gallery Sort, v10.4 Photo UserID,
-          v10.5 Storage Config
+          v10.5 Storage Config,
+          v0.25 Favorites / Stars (独立 Favorite 表，跨用户收藏公开照片)
 运行方式: python3 tests/integration_test.py
 需要: Go Core 运行于 http://127.0.0.1:8080
 """
@@ -843,6 +844,7 @@ def main():
     test_phase22(token)
     test_phase23(token)
     test_phase24()
+    test_phase25(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1102,6 +1104,77 @@ def test_phase24():
     _, status, _ = http("POST", "/api/auth/forgot-password",
                         body={"email": "test@example.invalid"})
     check("POST /api/auth/forgot-password public endpoint → 200 (regression)", status == 200, f"status={status}")
+
+
+def test_phase25(token):
+    section("v0.25  Favorites / Stars")
+
+    # ── GET /api/photos/favorites — authenticated required ──
+    _, status, _ = http("GET", "/api/photos/favorites")
+    check("GET /api/photos/favorites without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/photos/favorites — empty list for fresh user ──
+    d, status, _ = http("GET", "/api/photos/favorites", token=token)
+    check("GET /api/photos/favorites → 200", status == 200, f"status={status}")
+    check("GET /api/photos/favorites → has 'photos' key", isinstance(d, dict) and "photos" in d, d)
+    check("GET /api/photos/favorites → has 'total' key", isinstance(d, dict) and "total" in d, d)
+
+    # ── POST /api/photos/9999999/favorite — nonexistent photo → 404 ──
+    _, status, _ = http("POST", "/api/photos/9999999/favorite", token=token)
+    check("POST /api/photos/9999999/favorite → 404", status == 404, f"status={status}")
+
+    # ── DELETE /api/photos/9999999/favorite — nonexistent photo → 200 (silently ignores) ──
+    d, status, _ = http("DELETE", "/api/photos/9999999/favorite", token=token)
+    check("DELETE /api/photos/9999999/favorite → 200 (noop)", status == 200, f"status={status}")
+
+    # ── Find a real photo owned by the test user ──
+    photos_d, status, _ = http("GET", "/api/photos", token=token)
+    photo_id = None
+    if status == 200 and isinstance(photos_d, dict) and photos_d.get("photos"):
+        photo_id = photos_d["photos"][0]["ID"]
+    elif status == 200 and isinstance(photos_d, list) and photos_d:
+        photo_id = photos_d[0]["ID"]
+
+    if photo_id:
+        # ── POST favorite on own photo ──
+        d, status, _ = http("POST", f"/api/photos/{photo_id}/favorite", token=token)
+        check(f"POST /api/photos/{photo_id}/favorite → 200", status == 200, f"status={status}")
+        check("favorite response has 'favorited' key", isinstance(d, dict) and "favorited" in d, d)
+        check("favorite response 'favorited' is true", d.get("favorited") is True, d)
+
+        # ── GET /api/photos/favorites — should now have at least 1 ──
+        d, status, _ = http("GET", "/api/photos/favorites", token=token)
+        check("GET /api/photos/favorites after star → 200", status == 200, f"status={status}")
+        count_after = d.get("total", 0) if isinstance(d, dict) else 0
+        check("favorites total ≥ 1 after starring", count_after >= 1, f"total={count_after}")
+
+        # ── GET /api/photos/{id}/favorite/count ──
+        d, status, _ = http("GET", f"/api/photos/{photo_id}/favorite/count", token=token)
+        check(f"GET /api/photos/{photo_id}/favorite/count → 200", status == 200, f"status={status}")
+        check("count response has 'count' key", isinstance(d, dict) and "count" in d, d)
+        check("count ≥ 1 after starring", (d.get("count") or 0) >= 1, d)
+        check("count response has 'is_favorited' key", "is_favorited" in d, d)
+        check("is_favorited is true", d.get("is_favorited") is True, d)
+
+        # ── GET /api/photos/{id} — single photo has 'photo' + 'is_favorited' ──
+        d, status, _ = http("GET", f"/api/photos/{photo_id}", token=token)
+        check(f"GET /api/photos/{photo_id} → 200", status == 200, f"status={status}")
+        check("single photo response has 'photo' key", isinstance(d, dict) and "photo" in d, d)
+        check("single photo response has 'is_favorited' key", isinstance(d, dict) and "is_favorited" in d, d)
+        check("single photo is_favorited is true", d.get("is_favorited") is True, d)
+
+        # ── DELETE favorite ──
+        d, status, _ = http("DELETE", f"/api/photos/{photo_id}/favorite", token=token)
+        check(f"DELETE /api/photos/{photo_id}/favorite → 200", status == 200, f"status={status}")
+        check("unfavorite response has 'favorited' key", isinstance(d, dict) and "favorited" in d, d)
+        check("unfavorite response 'favorited' is false", d.get("favorited") is False, d)
+
+        # ── GET favorites count after unfav ──
+        d, status, _ = http("GET", f"/api/photos/{photo_id}/favorite/count", token=token)
+        check("is_favorited is false after unfav", d.get("is_favorited") is False, d)
+    else:
+        print(f"  {SKIP} Phase 25 favorite-on-own-photo tests (no photos found)")
+
 
 
 if __name__ == "__main__":
