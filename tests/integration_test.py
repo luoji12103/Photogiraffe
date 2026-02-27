@@ -846,6 +846,7 @@ def main():
     test_phase24()
     test_phase25(token)
     test_phase26(token)
+    test_phase27(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1243,6 +1244,70 @@ def test_phase26(token):
         check(f"POST /api/photos/bulk remove_tag on photo → 200", status == 200, f"status={status}")
     else:
         print(f"  {SKIP} Phase 26 tag tests (no photos found)")
+
+
+def test_phase27(token):
+    section("v0.27  Smart Albums")
+
+    # ── Unauthenticated access denied ──
+    _, status, _ = http("GET", "/api/smart-albums")
+    check("GET /api/smart-albums without token → 401", status == 401, f"status={status}")
+
+    # ── Create smart album (date_range) ──
+    d, status, _ = http("POST", "/api/smart-albums", token=token, body={
+        "name": "Test Smart Album",
+        "rule_type": "date_range",
+        "rule_params": '{"from":"2020-01-01","to":"2030-12-31"}'
+    })
+    check("POST /api/smart-albums → 201", status == 201, f"status={status}")
+    check("create response has 'ID' key", isinstance(d, dict) and "ID" in d, d)
+    album_id = d.get("ID") if isinstance(d, dict) else None
+
+    # ── Invalid rule_type returns 400 ──
+    _, status, _ = http("POST", "/api/smart-albums", token=token, body={
+        "name": "Bad Album",
+        "rule_type": "invalid_rule",
+        "rule_params": "{}"
+    })
+    check("POST /api/smart-albums invalid rule_type → 400", status == 400, f"status={status}")
+
+    # ── Missing name returns 400 ──
+    _, status, _ = http("POST", "/api/smart-albums", token=token, body={
+        "name": "",
+        "rule_type": "date_range",
+        "rule_params": "{}"
+    })
+    check("POST /api/smart-albums missing name → 400", status == 400, f"status={status}")
+
+    # ── List smart albums ──
+    d, status, _ = http("GET", "/api/smart-albums", token=token)
+    check("GET /api/smart-albums → 200", status == 200, f"status={status}")
+    check("list response is a list", isinstance(d, list), d)
+
+    if album_id:
+        # ── Evaluate smart album photos ──
+        d, status, _ = http("GET", f"/api/smart-albums/{album_id}/photos", token=token)
+        check(f"GET /api/smart-albums/:id/photos → 200", status == 200, f"status={status}")
+        check("photos response has 'photos' key", isinstance(d, dict) and "photos" in d, d)
+        check("photos response has 'total' key", isinstance(d, dict) and "total" in d, d)
+
+        # ── Update smart album ──
+        d2, status, _ = http("PUT", f"/api/smart-albums/{album_id}", token=token, body={
+            "name": "Updated Smart Album"
+        })
+        check(f"PUT /api/smart-albums/:id → 200", status == 200, f"status={status}")
+        check("updated name matches", d2.get("Name") == "Updated Smart Album", d2)
+
+        # ── Delete smart album ──
+        d3, status, _ = http("DELETE", f"/api/smart-albums/{album_id}", token=token)
+        check(f"DELETE /api/smart-albums/:id → 200", status == 200, f"status={status}")
+        check("delete response 'deleted' is true", isinstance(d3, dict) and d3.get("deleted") is True, d3)
+
+        # ── Verify deletion — 404 ──
+        _, status, _ = http("GET", f"/api/smart-albums/{album_id}", token=token)
+        check(f"GET deleted smart album → 404", status == 404, f"status={status}")
+    else:
+        print(f"  {SKIP} Phase 27 album CRUD tests (create failed)")
 
 
 if __name__ == "__main__":

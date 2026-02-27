@@ -242,3 +242,21 @@ type Favorite struct {
 	UserID  uint `gorm:"not null;uniqueIndex:idx_fav_user_photo"`
 	PhotoID uint `gorm:"not null;uniqueIndex:idx_fav_user_photo;index"`
 }
+
+// ─── Phase 27 — Smart Albums ──────────────────────────────────────────────────
+
+// SmartAlbum is a dynamically-evaluated collection of photos matching a rule.
+// RuleType determines how RuleParams JSON is interpreted.
+//
+//   date_range         {"from":"2024-01-01","to":"2024-12-31"}
+//   tags_contain       {"tags":["portrait","night"]}
+//   camera_model       {"model":"Sony A7 III"}
+//   auto_tags_contain  {"tags":["person","sky"]}
+//   color_bucket       {"bucket":"blue"}
+type SmartAlbum struct {
+	gorm.Model
+	UserID     uint   `gorm:"not null;index"`
+	Name       string `gorm:"not null"`
+	RuleType   string `gorm:"not null"` // date_range | tags_contain | camera_model | auto_tags_contain | color_bucket
+	RuleParams string `gorm:"type:jsonb;not null;default:'{}'"`
+}

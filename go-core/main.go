@@ -2479,6 +2479,188 @@ func main() {
 		return c.JSON(fiber.Map{"added": added, "album_id": body.AlbumID})
 	})
 
+	// ─── Phase 27 — Smart Albums ──────────────────────────────────────────────
+
+	// GET /api/smart-albums — list all smart albums for current user
+	app.Get("/api/smart-albums", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var albums []models.SmartAlbum
+		database.DB.Where("user_id = ?", uid).Order("created_at desc").Find(&albums)
+		return c.JSON(albums)
+	})
+
+	// POST /api/smart-albums — create a new smart album
+	app.Post("/api/smart-albums", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var body struct {
+			Name       string `json:"name"`
+			RuleType   string `json:"rule_type"`
+			RuleParams string `json:"rule_params"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.Name == "" || body.RuleType == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name and rule_type required"})
+		}
+		validRules := map[string]bool{"date_range": true, "tags_contain": true, "camera_model": true, "auto_tags_contain": true, "color_bucket": true}
+		if !validRules[body.RuleType] {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_type"})
+		}
+		params := body.RuleParams
+		if params == "" {
+			params = "{}"
+		}
+		album := models.SmartAlbum{UserID: uid, Name: body.Name, RuleType: body.RuleType, RuleParams: params}
+		if err := database.DB.Create(&album).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create smart album"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(album)
+	})
+
+	// GET /api/smart-albums/:id — get a single smart album
+	app.Get("/api/smart-albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var album models.SmartAlbum
+		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
+		}
+		if role != "SuperAdmin" && album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		return c.JSON(album)
+	})
+
+	// PUT /api/smart-albums/:id — update a smart album
+	app.Put("/api/smart-albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var album models.SmartAlbum
+		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
+		}
+		if role != "SuperAdmin" && album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		var body struct {
+			Name       string `json:"name"`
+			RuleType   string `json:"rule_type"`
+			RuleParams string `json:"rule_params"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Name != "" {
+			album.Name = body.Name
+		}
+		if body.RuleType != "" {
+			validRules := map[string]bool{"date_range": true, "tags_contain": true, "camera_model": true, "auto_tags_contain": true, "color_bucket": true}
+			if !validRules[body.RuleType] {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_type"})
+			}
+			album.RuleType = body.RuleType
+		}
+		if body.RuleParams != "" {
+			album.RuleParams = body.RuleParams
+		}
+		database.DB.Save(&album)
+		return c.JSON(album)
+	})
+
+	// DELETE /api/smart-albums/:id — delete a smart album
+	app.Delete("/api/smart-albums/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var album models.SmartAlbum
+		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
+		}
+		if role != "SuperAdmin" && album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		database.DB.Delete(&album)
+		return c.JSON(fiber.Map{"deleted": true})
+	})
+
+	// GET /api/smart-albums/:id/photos — evaluate rule and return matching photos
+	app.Get("/api/smart-albums/:id/photos", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var album models.SmartAlbum
+		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
+		}
+		if role != "SuperAdmin" && album.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+
+		page := c.QueryInt("page", 1)
+		if page < 1 {
+			page = 1
+		}
+		limit := c.QueryInt("limit", 20)
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		// Base query — only user's own photos
+		q := database.DB.Model(&models.Photo{}).Where("user_id = ? AND status = 'completed'", uid)
+
+		// Parse rule params
+		var params map[string]interface{}
+		_ = json.Unmarshal([]byte(album.RuleParams), &params)
+
+		switch album.RuleType {
+		case "date_range":
+			if from, ok := params["from"].(string); ok && from != "" {
+				q = q.Where("uploaded_at >= ?", from)
+			}
+			if to, ok := params["to"].(string); ok && to != "" {
+				q = q.Where("uploaded_at <= ?", to+" 23:59:59")
+			}
+		case "tags_contain":
+			if tags, ok := params["tags"].([]interface{}); ok {
+				for _, t := range tags {
+					if tagStr, ok := t.(string); ok && tagStr != "" {
+						q = q.Where("tags::text ILIKE ?", "%"+tagStr+"%")
+					}
+				}
+			}
+		case "auto_tags_contain":
+			if tags, ok := params["tags"].([]interface{}); ok {
+				for _, t := range tags {
+					if tagStr, ok := t.(string); ok && tagStr != "" {
+						q = q.Where("auto_tags::text ILIKE ?", "%"+tagStr+"%")
+					}
+				}
+			}
+		case "camera_model":
+			if model, ok := params["model"].(string); ok && model != "" {
+				q = q.Joins("JOIN exif_data ON exif_data.photo_id = photos.id").
+					Where("exif_data.camera_model ILIKE ?", "%"+model+"%")
+			}
+		case "color_bucket":
+			if bucket, ok := params["bucket"].(string); ok && bucket != "" {
+				q = q.Where("dominant_colors::text ILIKE ?", "%"+bucket+"%")
+			}
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var photos []models.Photo
+		q.Preload("ExifData").Order("uploaded_at desc").Limit(limit).Offset(offset).Find(&photos)
+
+		totalPages := int((total + int64(limit) - 1) / int64(limit))
+		return c.JSON(fiber.Map{
+			"photos":      photos,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+			"album":       album,
+		})
+	})
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 5 — Feature Flags & Admin
 	// ─────────────────────────────────────────────────────────────────────────
