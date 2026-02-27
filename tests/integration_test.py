@@ -839,6 +839,7 @@ def main():
     test_phase18(token)
     test_phase19(token)
     test_phase20(token)
+    test_phase21(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -968,6 +969,34 @@ def test_phase20(token):
         at_status = 0
     check("PUT /internal/photos/999999/auto-tags with secret → 404 (photo not found)",
           at_status == 404, f"status={at_status}")
+
+
+def test_phase21(token):
+    section("v0.21  Map Clustering + Date Filter")
+
+    # ── GET /api/photos/map without token → 401 ──
+    _, status, _ = http("GET", "/api/photos/map")
+    check("GET /api/photos/map without token → 401", status == 401, f"status={status}")
+
+    # ── GET /api/photos/map → 200, returns array ──
+    d, status, _ = http("GET", "/api/photos/map", token=token)
+    check("GET /api/photos/map → 200", status == 200, f"status={status}")
+    check("  response is a list", isinstance(d, list), d)
+
+    # ── GET /api/photos/map with date range → 200 ──
+    d, status, _ = http("GET", "/api/photos/map?start_date=2020-01-01&end_date=2030-12-31", token=token)
+    check("GET /api/photos/map?start_date=...&end_date=... → 200", status == 200, f"status={status}")
+    check("  response is a list with date params", isinstance(d, list), d)
+
+    # ── GET /api/photos/map with limit → 200 ──
+    d, status, _ = http("GET", "/api/photos/map?limit=10", token=token)
+    check("GET /api/photos/map?limit=10 → 200", status == 200, f"status={status}")
+    check("  result count ≤ 10", isinstance(d, list) and len(d) <= 10, f"len={len(d) if isinstance(d, list) else d}")
+
+    # ── Check shot_at field is present on each point (may be empty string) ──
+    if isinstance(d, list) and len(d) > 0:
+        first = d[0]
+        check("  map point has shot_at field", "shot_at" in first, f"keys={list(first.keys())}")
 
 
 if __name__ == "__main__":

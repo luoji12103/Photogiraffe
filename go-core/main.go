@@ -687,12 +687,21 @@ func main() {
 		uid := userIDFromLocals(c)
 		role := c.Locals("userRole").(string)
 
+		startDate := c.Query("start_date") // YYYY-MM-DD
+		endDate := c.Query("end_date")     // YYYY-MM-DD
+		limitStr := c.Query("limit", "500")
+		limit := 500
+		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 && v <= 2000 {
+			limit = v
+		}
+
 		type MapPoint struct {
 			ID               uint    `json:"id"`
 			Lat              float64 `json:"lat"`
 			Lng              float64 `json:"lng"`
 			ThumbnailPath    string  `json:"thumbnail_path"`
 			OriginalFilename string  `json:"original_filename"`
+			ShotAt           string  `json:"shot_at"`
 		}
 
 		type row struct {
@@ -701,17 +710,25 @@ func main() {
 			GPSLongitude     string
 			MinioPath        string
 			OriginalFilename string
+			DateTimeOriginal string
 		}
 
 		query := database.DB.Table("photos").
-			Select("photos.id AS photo_id, exif_data.gps_latitude, exif_data.gps_longitude, photos.minio_path, photos.original_filename").
+			Select("photos.id AS photo_id, exif_data.gps_latitude, exif_data.gps_longitude, photos.minio_path, photos.original_filename, exif_data.date_time_original").
 			Joins("JOIN exif_data ON exif_data.photo_id = photos.id").
 			Where("photos.deleted_at IS NULL AND exif_data.deleted_at IS NULL").
 			Where("exif_data.gps_latitude != '' AND exif_data.gps_longitude != ''").
-			Where("photos.status = 'completed'")
+			Where("photos.status = 'completed'").
+			Limit(limit)
 
 		if role != "SuperAdmin" {
 			query = query.Where("photos.user_id = ?", uid)
+		}
+		if startDate != "" {
+			query = query.Where("exif_data.date_time_original >= ?", startDate)
+		}
+		if endDate != "" {
+			query = query.Where("exif_data.date_time_original <= ?", endDate+" 23:59:59")
 		}
 
 		var rows []row
@@ -736,6 +753,7 @@ func main() {
 				Lng:              lng,
 				ThumbnailPath:    thumbPath,
 				OriginalFilename: r.OriginalFilename,
+				ShotAt:           r.DateTimeOriginal,
 			})
 		}
 
