@@ -849,6 +849,7 @@ def main():
     test_phase27(token)
     test_phase28(token)
     test_phase29(token)
+    test_phase30(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1392,6 +1393,45 @@ def test_phase29(token):
         check("delete response 'deleted' is true", isinstance(d2, dict) and d2.get("deleted") is True, d2)
     else:
         print(f"  {SKIP} Phase 29 delete test (create failed)")
+
+
+def test_phase30(token):
+    section("v0.30  Data Backup / Export")
+
+    # ── Unauthenticated → 401 ──
+    _, status, _ = http("POST", "/api/backup/export")
+    check("POST /api/backup/export without token → 401", status == 401, f"status={status}")
+
+    _, status, _ = http("GET", "/api/backup/jobs")
+    check("GET /api/backup/jobs without token → 401", status == 401, f"status={status}")
+
+    # ── Create backup job → 201 ──
+    d, status, _ = http("POST", "/api/backup/export", token=token)
+    check("POST /api/backup/export → 201", status == 201, f"status={status}")
+    check("response has 'ID'", isinstance(d, dict) and "ID" in d, d)
+    job_id = d.get("ID") if isinstance(d, dict) else None
+
+    # ── Duplicate → 409 ──
+    _, status, _ = http("POST", "/api/backup/export", token=token)
+    check("POST /api/backup/export duplicate → 409", status == 409, f"status={status}")
+
+    # ── List jobs → 200 ──
+    d, status, _ = http("GET", "/api/backup/jobs", token=token)
+    check("GET /api/backup/jobs → 200", status == 200, f"status={status}")
+    check("list is a list", isinstance(d, list), d)
+
+    if job_id:
+        # ── Get single job → 200 ──
+        d2, status, _ = http("GET", f"/api/backup/jobs/{job_id}", token=token)
+        check(f"GET /api/backup/jobs/:id → 200", status == 200, f"status={status}")
+        check("job has 'Status'", isinstance(d2, dict) and "Status" in d2, d2)
+
+        # ── Delete job → 200 ──
+        d3, status, _ = http("DELETE", f"/api/backup/jobs/{job_id}", token=token)
+        check(f"DELETE /api/backup/jobs/:id → 200", status == 200, f"status={status}")
+        check("deleted is true", isinstance(d3, dict) and d3.get("deleted") is True, d3)
+    else:
+        print(f"  {SKIP} Phase 30 single-job tests (create failed)")
 
 
 if __name__ == "__main__":

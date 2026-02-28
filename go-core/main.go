@@ -2846,6 +2846,127 @@ func main() {
 		return c.JSON(fiber.Map{"deleted": true})
 	})
 
+	// ─── Phase 30 — Data Backup / Export ─────────────────────────────────────
+
+	// POST /api/backup/export — create a backup job and enqueue it
+	app.Post("/api/backup/export", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		// Check for a running or pending job to avoid duplicates
+		var existing models.BackupJob
+		if err := database.DB.Where("user_id = ? AND status IN ('pending','processing')", uid).
+			First(&existing).Error; err == nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":  "a backup job is already in progress",
+				"job_id": existing.ID,
+			})
+		}
+		job := models.BackupJob{UserID: uid, Status: "pending"}
+		if err := database.DB.Create(&job).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create backup job"})
+		}
+		// Enqueue in Redis backup_queue
+		if err := queue.PushTask("backup_queue", map[string]interface{}{
+			"job_id":  job.ID,
+			"user_id": uid,
+			"type":    "backup_export",
+		}); err != nil {
+			// Not fatal — job is created and can be retried
+			log.Printf("Warning: failed to enqueue backup job %d: %v", job.ID, err)
+		}
+		return c.Status(fiber.StatusCreated).JSON(job)
+	})
+
+	// GET /api/backup/jobs — list all backup jobs for user
+	app.Get("/api/backup/jobs", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var jobs []models.BackupJob
+		database.DB.Where("user_id = ?", uid).Order("created_at desc").Limit(50).Find(&jobs)
+		return c.JSON(jobs)
+	})
+
+	// GET /api/backup/jobs/:id — get single backup job (with download URL if completed)
+	app.Get("/api/backup/jobs/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var job models.BackupJob
+		if err := database.DB.First(&job, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
+		}
+		if role != "SuperAdmin" && job.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		result := map[string]interface{}{
+			"ID":           job.ID,
+			"UserID":       job.UserID,
+			"Status":       job.Status,
+			"OutputPath":   job.OutputPath,
+			"ErrorMessage": job.ErrorMessage,
+			"CompletedAt":  job.CompletedAt,
+			"CreatedAt":    job.CreatedAt,
+		}
+		// Generate a presigned download URL if the job is completed
+		if job.Status == "completed" && job.OutputPath != "" {
+			presignedURL, err := storage.MinioClient.PresignedGetObject(
+				c.Context(), "photos", job.OutputPath, 24*time.Hour, nil,
+			)
+			if err == nil {
+				result["download_url"] = presignedURL.String()
+			}
+		}
+		return c.JSON(result)
+	})
+
+	// DELETE /api/backup/jobs/:id — cancel/delete a backup job
+	app.Delete("/api/backup/jobs/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var job models.BackupJob
+		if err := database.DB.First(&job, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
+		}
+		if job.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		database.DB.Delete(&job)
+		return c.JSON(fiber.Map{"deleted": true})
+	})
+
+	// PUT /internal/backup-jobs/:id/status — Python Worker updates backup job status
+	app.Put("/internal/backup-jobs/:id/status", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		var body struct {
+			Status       string `json:"status"`
+			OutputPath   string `json:"output_path"`
+			ErrorMessage string `json:"error_message"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		var job models.BackupJob
+		if err := database.DB.First(&job, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
+		}
+		job.Status = body.Status
+		if body.OutputPath != "" {
+			job.OutputPath = body.OutputPath
+		}
+		if body.ErrorMessage != "" {
+			job.ErrorMessage = body.ErrorMessage
+		}
+		if body.Status == "completed" || body.Status == "failed" {
+			now := time.Now()
+			job.CompletedAt = &now
+		}
+		database.DB.Save(&job)
+		return c.JSON(job)
+	})
+
+	// GET /internal/users/:user_id/photos — return all photo metadata for a user (for backup worker)
+	app.Get("/internal/users/:user_id/photos", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		var photos []models.Photo
+		database.DB.Where("user_id = ? AND status = 'completed'", c.Params("user_id")).
+			Preload("ExifData").Order("uploaded_at desc").Find(&photos)
+		return c.JSON(photos)
+	})
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 5 — Feature Flags & Admin
 	// ─────────────────────────────────────────────────────────────────────────

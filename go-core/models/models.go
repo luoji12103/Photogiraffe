@@ -270,3 +270,15 @@ type SavedSearch struct {
 	Name   string `gorm:"not null"`
 	Params string `gorm:"type:text;not null;default:''"` // URL-encoded query string
 }
+
+// ─── Phase 30 — Data Backup / Export ──────────────────────────────────────────
+
+// BackupJob tracks a full-account data-export request.
+type BackupJob struct {
+	gorm.Model
+	UserID       uint       `gorm:"not null;index"`
+	Status       string     `gorm:"default:'pending'"` // pending | processing | completed | failed
+	OutputPath   string     // MinIO path of the zip file (set when completed)
+	ErrorMessage string     // error detail when failed
+	CompletedAt  *time.Time // nullable
+}
