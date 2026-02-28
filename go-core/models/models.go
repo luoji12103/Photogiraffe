@@ -260,3 +260,13 @@ type SmartAlbum struct {
 	RuleType   string `gorm:"not null"` // date_range | tags_contain | camera_model | auto_tags_contain | color_bucket
 	RuleParams string `gorm:"type:jsonb;not null;default:'{}'"`
 }
+
+// ─── Phase 29 — Saved Searches ────────────────────────────────────────────────
+
+// SavedSearch stores a named set of search parameters for quick re-use.
+type SavedSearch struct {
+	gorm.Model
+	UserID uint   `gorm:"not null;index"`
+	Name   string `gorm:"not null"`
+	Params string `gorm:"type:text;not null;default:''"` // URL-encoded query string
+}

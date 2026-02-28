@@ -2779,6 +2779,73 @@ func main() {
 		return c.JSON(s)
 	})
 
+	// ─── Phase 29 — Enhanced Search: Tag Autocomplete & Saved Searches ────────
+
+	// GET /api/photos/tags/autocomplete?q= — top tags matching query
+	app.Get("/api/photos/tags/autocomplete", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		q := strings.TrimSpace(c.Query("q", ""))
+		type Row struct {
+			Tag   string `json:"tag"`
+			Count int64  `json:"count"`
+		}
+		rows := make([]Row, 0)
+		pattern := "%" + q + "%"
+		database.DB.Raw(`
+			SELECT tag, COUNT(*) AS count
+			FROM photos, unnest(string_to_array(btrim(tags::text,'{}'), ',')) AS tag
+			WHERE user_id = ? AND status = 'completed'
+			  AND tag ILIKE ?
+			GROUP BY tag
+			ORDER BY count DESC
+			LIMIT 20
+		`, uid, pattern).Scan(&rows)
+		return c.JSON(rows)
+	})
+
+	// GET /api/saved-searches — list current user's saved searches
+	app.Get("/api/saved-searches", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var searches []models.SavedSearch
+		database.DB.Where("user_id = ?", uid).Order("created_at desc").Find(&searches)
+		return c.JSON(searches)
+	})
+
+	// POST /api/saved-searches — save a search
+	app.Post("/api/saved-searches", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var body struct {
+			Name   string `json:"name"`
+			Params string `json:"params"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.Name == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name required"})
+		}
+		params := body.Params
+		if params == "" {
+			params = "{}"
+		}
+		ss := models.SavedSearch{UserID: uid, Name: body.Name, Params: params}
+		if err := database.DB.Create(&ss).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save search"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(ss)
+	})
+
+	// DELETE /api/saved-searches/:id — delete a saved search
+	app.Delete("/api/saved-searches/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var ss models.SavedSearch
+		if err := database.DB.First(&ss, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
+		}
+		if ss.UserID != uid {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		database.DB.Delete(&ss)
+		return c.JSON(fiber.Map{"deleted": true})
+	})
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 5 — Feature Flags & Admin
 	// ─────────────────────────────────────────────────────────────────────────
@@ -3936,6 +4003,10 @@ func main() {
 		lngStr := strings.TrimSpace(c.Query("lng", ""))
 		radiusKmStr := strings.TrimSpace(c.Query("radius_km", ""))
 		colorSpace := strings.TrimSpace(c.Query("color_space", ""))
+		focalMin := strings.TrimSpace(c.Query("focal_min", ""))
+		focalMax := strings.TrimSpace(c.Query("focal_max", ""))
+		hasGPS := strings.TrimSpace(c.Query("has_gps", ""))
+		isFavorited := strings.TrimSpace(c.Query("is_favorited", ""))
 
 		query := database.DB.Model(&models.Photo{}).
 			Joins("LEFT JOIN exif_data ON exif_data.photo_id = photos.id AND exif_data.deleted_at IS NULL")
@@ -3956,6 +4027,23 @@ func main() {
 		}
 		if colorSpace != "" {
 			query = query.Where("exif_data.color_space ILIKE ?", "%"+colorSpace+"%")
+		}
+		// Focal length range
+		if focalMin != "" {
+			query = query.Where("exif_data.focal_length >= ?", focalMin)
+		}
+		if focalMax != "" {
+			query = query.Where("exif_data.focal_length <= ?", focalMax)
+		}
+		// has_gps filter
+		if hasGPS == "true" || hasGPS == "1" {
+			query = query.Where("exif_data.gps_latitude IS NOT NULL AND exif_data.gps_latitude <> ''")
+		} else if hasGPS == "false" || hasGPS == "0" {
+			query = query.Where("(exif_data.gps_latitude IS NULL OR exif_data.gps_latitude = '')")
+		}
+		// is_favorited filter — join favorites table
+		if isFavorited == "true" || isFavorited == "1" {
+			query = query.Joins("INNER JOIN favorites ON favorites.photo_id = photos.id AND favorites.user_id = ? AND favorites.deleted_at IS NULL", uid)
 		}
 		// ISO stored as string like "1600" — extract numeric part
 		if isoMin != "" {

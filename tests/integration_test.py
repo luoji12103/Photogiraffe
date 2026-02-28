@@ -848,6 +848,7 @@ def main():
     test_phase26(token)
     test_phase27(token)
     test_phase28(token)
+    test_phase29(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1344,6 +1345,53 @@ def test_phase28(token):
     d, status, _ = http("GET", "/api/analytics/iso", token=token)
     check("GET /api/analytics/iso → 200", status == 200, f"status={status}")
     check("iso response is a list", isinstance(d, list), d)
+
+
+def test_phase29(token):
+    section("v0.29  Enhanced Search (focal, GPS, favorited, saved searches, tag autocomplete)")
+
+    # ── Tag autocomplete ──
+    d, status, _ = http("GET", "/api/photos/tags/autocomplete?q=")
+    check("GET /api/photos/tags/autocomplete without token → 401", status == 401, f"status={status}")
+
+    d, status, _ = http("GET", "/api/photos/tags/autocomplete?q=a", token=token)
+    check("GET /api/photos/tags/autocomplete → 200", status == 200, f"status={status}")
+    check("autocomplete response is list", isinstance(d, list), d)
+
+    # ── Saved searches unauthenticated ──
+    _, status, _ = http("GET", "/api/saved-searches")
+    check("GET /api/saved-searches without token → 401", status == 401, f"status={status}")
+
+    # ── Create saved search ──
+    d, status, _ = http("POST", "/api/saved-searches", token=token, body={
+        "name": "Test Saved Search",
+        "params": "q=landscape&camera=Sony"
+    })
+    check("POST /api/saved-searches → 201", status == 201, f"status={status}")
+    check("saved search has 'ID'", isinstance(d, dict) and "ID" in d, d)
+    ss_id = d.get("ID") if isinstance(d, dict) else None
+
+    # ── Missing name returns 400 ──
+    _, status, _ = http("POST", "/api/saved-searches", token=token, body={"name": "", "params": "q=test"})
+    check("POST /api/saved-searches missing name → 400", status == 400, f"status={status}")
+
+    # ── List saved searches ──
+    d, status, _ = http("GET", "/api/saved-searches", token=token)
+    check("GET /api/saved-searches → 200", status == 200, f"status={status}")
+    check("list is a list", isinstance(d, list), d)
+
+    # ── Enhanced search params ──
+    d, status, _ = http("GET", "/api/photos/search?focal_min=24&focal_max=200&has_gps=true&is_favorited=false", token=token)
+    check("Enhanced search focal+GPS params → 200", status == 200, f"status={status}")
+    check("enhanced search has 'photos'", isinstance(d, dict) and "photos" in d, d)
+
+    if ss_id:
+        # ── Delete saved search ──
+        d2, status, _ = http("DELETE", f"/api/saved-searches/{ss_id}", token=token)
+        check(f"DELETE /api/saved-searches/:id → 200", status == 200, f"status={status}")
+        check("delete response 'deleted' is true", isinstance(d2, dict) and d2.get("deleted") is True, d2)
+    else:
+        print(f"  {SKIP} Phase 29 delete test (create failed)")
 
 
 if __name__ == "__main__":
