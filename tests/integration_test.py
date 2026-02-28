@@ -847,6 +847,7 @@ def main():
     test_phase25(token)
     test_phase26(token)
     test_phase27(token)
+    test_phase28(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1308,6 +1309,41 @@ def test_phase27(token):
         check(f"GET deleted smart album → 404", status == 404, f"status={status}")
     else:
         print(f"  {SKIP} Phase 27 album CRUD tests (create failed)")
+
+
+def test_phase28(token):
+    section("v0.28  Analytics / Statistics")
+
+    # ── Unauthenticated access denied ──
+    _, status, _ = http("GET", "/api/analytics/summary")
+    check("GET /api/analytics/summary without token → 401", status == 401, f"status={status}")
+
+    # ── Summary ──
+    d, status, _ = http("GET", "/api/analytics/summary", token=token)
+    check("GET /api/analytics/summary → 200", status == 200, f"status={status}")
+    check("summary has 'total_photos'", isinstance(d, dict) and "total_photos" in d, d)
+    check("summary has 'total_favorites'", isinstance(d, dict) and "total_favorites" in d, d)
+    check("summary has 'total_albums'", isinstance(d, dict) and "total_albums" in d, d)
+
+    # ── Monthly ──
+    d, status, _ = http("GET", "/api/analytics/monthly", token=token)
+    check("GET /api/analytics/monthly → 200", status == 200, f"status={status}")
+    check("monthly response is a list", isinstance(d, list), d)
+
+    # ── Camera ──
+    d, status, _ = http("GET", "/api/analytics/camera", token=token)
+    check("GET /api/analytics/camera → 200", status == 200, f"status={status}")
+    check("camera response is a list", isinstance(d, list), d)
+
+    # ── Focal length ──
+    d, status, _ = http("GET", "/api/analytics/focal-length", token=token)
+    check("GET /api/analytics/focal-length → 200", status == 200, f"status={status}")
+    check("focal-length response is a list", isinstance(d, list), d)
+
+    # ── ISO ──
+    d, status, _ = http("GET", "/api/analytics/iso", token=token)
+    check("GET /api/analytics/iso → 200", status == 200, f"status={status}")
+    check("iso response is a list", isinstance(d, list), d)
 
 
 if __name__ == "__main__":

@@ -2661,6 +2661,124 @@ func main() {
 		})
 	})
 
+	// ─── Phase 28 — Analytics / Statistics ───────────────────────────────────
+
+	// GET /api/analytics/monthly — photos uploaded per month (last 12 months)
+	app.Get("/api/analytics/monthly", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type Row struct {
+			Month string `json:"month"`
+			Count int64  `json:"count"`
+		}
+		rows := make([]Row, 0)
+		database.DB.Raw(`
+			SELECT to_char(date_trunc('month', uploaded_at), 'YYYY-MM') AS month,
+			       COUNT(*) AS count
+			FROM photos
+			WHERE user_id = ? AND status = 'completed'
+			  AND uploaded_at >= NOW() - INTERVAL '12 months'
+			GROUP BY 1
+			ORDER BY 1
+		`, uid).Scan(&rows)
+		return c.JSON(rows)
+	})
+
+	// GET /api/analytics/camera — top 10 camera models by photo count
+	app.Get("/api/analytics/camera", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type Row struct {
+			Camera string `json:"camera"`
+			Count  int64  `json:"count"`
+		}
+		rows := make([]Row, 0)
+		database.DB.Raw(`
+			SELECT e.camera_model AS camera, COUNT(*) AS count
+			FROM exif_data e
+			JOIN photos p ON p.id = e.photo_id
+			WHERE p.user_id = ? AND p.status = 'completed'
+			  AND e.camera_model IS NOT NULL AND e.camera_model <> ''
+			GROUP BY 1
+			ORDER BY 2 DESC
+			LIMIT 10
+		`, uid).Scan(&rows)
+		return c.JSON(rows)
+	})
+
+	// GET /api/analytics/focal-length — focal length distribution (binned)
+	app.Get("/api/analytics/focal-length", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type Row struct {
+			Bin   string `json:"bin"`
+			Count int64  `json:"count"`
+		}
+		rows := make([]Row, 0)
+		database.DB.Raw(`
+			SELECT CASE
+				WHEN e.focal_length < 20  THEN '<20mm'
+				WHEN e.focal_length < 35  THEN '20-35mm'
+				WHEN e.focal_length < 50  THEN '35-50mm'
+				WHEN e.focal_length < 85  THEN '50-85mm'
+				WHEN e.focal_length < 135 THEN '85-135mm'
+				WHEN e.focal_length < 200 THEN '135-200mm'
+				ELSE '200mm+'
+			END AS bin,
+			COUNT(*) AS count
+			FROM exif_data e
+			JOIN photos p ON p.id = e.photo_id
+			WHERE p.user_id = ? AND p.status = 'completed'
+			  AND e.focal_length IS NOT NULL AND e.focal_length > 0
+			GROUP BY 1
+			ORDER BY MIN(e.focal_length)
+		`, uid).Scan(&rows)
+		return c.JSON(rows)
+	})
+
+	// GET /api/analytics/iso — ISO distribution (binned)
+	app.Get("/api/analytics/iso", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type Row struct {
+			Bin   string `json:"bin"`
+			Count int64  `json:"count"`
+		}
+		rows := make([]Row, 0)
+		database.DB.Raw(`
+			SELECT CASE
+				WHEN e.iso < 100   THEN '<100'
+				WHEN e.iso < 200   THEN '100-200'
+				WHEN e.iso < 400   THEN '200-400'
+				WHEN e.iso < 800   THEN '400-800'
+				WHEN e.iso < 1600  THEN '800-1600'
+				WHEN e.iso < 3200  THEN '1600-3200'
+				ELSE '3200+'
+			END AS bin,
+			COUNT(*) AS count
+			FROM exif_data e
+			JOIN photos p ON p.id = e.photo_id
+			WHERE p.user_id = ? AND p.status = 'completed'
+			  AND e.iso IS NOT NULL AND e.iso > 0
+			GROUP BY 1
+			ORDER BY MIN(e.iso)
+		`, uid).Scan(&rows)
+		return c.JSON(rows)
+	})
+
+	// GET /api/analytics/summary — quick summary (total photos, total size, favorites, albums)
+	app.Get("/api/analytics/summary", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		type Summary struct {
+			TotalPhotos   int64 `json:"total_photos"`
+			TotalFavorites int64 `json:"total_favorites"`
+			TotalAlbums   int64 `json:"total_albums"`
+			TotalSmartAlbums int64 `json:"total_smart_albums"`
+		}
+		var s Summary
+		database.DB.Model(&models.Photo{}).Where("user_id = ? AND status = 'completed'", uid).Count(&s.TotalPhotos)
+		database.DB.Model(&models.Favorite{}).Where("user_id = ?", uid).Count(&s.TotalFavorites)
+		database.DB.Model(&models.Album{}).Where("user_id = ?", uid).Count(&s.TotalAlbums)
+		database.DB.Model(&models.SmartAlbum{}).Where("user_id = ?", uid).Count(&s.TotalSmartAlbums)
+		return c.JSON(s)
+	})
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Phase 5 — Feature Flags & Admin
 	// ─────────────────────────────────────────────────────────────────────────
