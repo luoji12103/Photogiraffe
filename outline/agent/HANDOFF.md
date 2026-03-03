@@ -1,10 +1,10 @@
 # Photogiraffe — 开发工作交接文档
 
-> **本文最后更新**：2026-02-26（Phase 17 完成）
-> **当前已交付至**：v17.4（Phase 17 感知哈希去重）
-> **下一步工作**：Phase 18（导出历史页 / AI 自动标签）
+> **本文最后更新**：2026-03-03（Phase 36 完成）
+> **当前已交付至**：v36（Phase 36 元数据编辑/批量时间偏移）
+> **下一步工作**：Phase 37（待规划）
 > **仓库**：`luoji12103/Photogiraffe`，分支 `s4.6full-stack`
-> **最新 commit**：`ae3876a` feat: Phase 17 — perceptual hash deduplication (v17.1-v17.4)
+> **最新 commit**：`967db9f` feat: Phase 31-36 — Ratings/ColorLabels/TagMgmt/Quota/Notifications/Slideshow/MetaEdit
 
 ---
 
@@ -27,6 +27,27 @@ Photogiraffe 是面向摄影师的**高画质个人影像管理平台**，核心
 - SSE 实时事件推送（任务完成通知）
 - SuperAdmin 用户管理（查看统计、修改角色、删除用户、查看用户照片）
 - 存储后端配置（MinIO / S3 兼容 / WebDAV 可切换）
+- 导出历史管理：独立导出历史页 + 删除历史
+- CLIP 本地自动标签（ViT-B-32，512 维向量匹配）
+- 账号安全：修改密码 / 忘记密码邮件重置 / 登录历史（Phase 22）
+- 感知哈希去重（pHash，Hamming 距离 ≤10）
+- 地图 GPS 聚合 + 时间轴视图
+- 照片备注（多条文字备注，带时间戳）
+- PWA 离线支持（sw.js，App Manifest，安装提示）
+- 收藏夹（per-user Favorites 独立视图）
+- 批量操作扩展（评分/颜色标签/批量操作下拉选择）
+- 智能相册（复合过滤规则自动聚合）
+- 数据分析图表（月度/相机/焦段/ISO）
+- 高级搜索增强（GPS 范围/最小焦距/收藏/已保存搜索）
+- 数据备份导出（BackupJob，完整相册 ZIP）
+- 星级评分（1-5 星，照片网格内联编辑）
+- 颜色标签（red/orange/yellow/green/blue/purple）
+- 标签管理（全局列标签/批量重命名/删除）
+- 存储配额（用户配额 + 管理员调整 + 用量面板）
+- 通知中心（In-app Notification，已读/删除）
+- 幻灯片放映（SlideshowModal，键盘/触摸控制）
+- 元数据编辑（描述/版权/创作者/标题/地点 + 地点快速填充）
+- 批量时间偏移（时区校正，PhotoCard 内联日期显示）
 
 ---
 
@@ -62,7 +83,7 @@ Photogiraffe 是面向摄影师的**高画质个人影像管理平台**，核心
   └─ (其他 /api/* 路由均为 Go Core 代理，见第九节)
 
 Go Core (:8080，绑定 127.0.0.1)
-  │                              75 个路由，222 个 Fiber handlers
+  │                              ~130 个路由（5263 行）
   ├─ POST /upload                      → MinIO (raw/) + Redis Stream photogiraffe_tasks
   ├─ 对外: /photos, /api/*, /share/*, /public/*
   ├─ PUT  /internal/*                  ← Python Worker 回调（需 X-Internal-Secret）
@@ -94,7 +115,7 @@ MinIO (内部，9001 仅 console)
 ├── .env.example            # 模板（已提交）
 ├── docker-compose.yml      # 6 服务编排
 ├── tests/
-│   └── integration_test.py # 集成测试（128 项，全部通过）
+│   └── integration_test.py # 集成测试（299/301 通过，2 项预置失败）
 ├── frontend/src/
 │   ├── app/
 │   │   ├── page.tsx                  # 画廊首页（排序 + 布局切换）
@@ -109,6 +130,13 @@ MinIO (内部，9001 仅 console)
 │   │   ├── search/page.tsx           # 高级搜索
 │   │   ├── p/[username]/page.tsx     # 公开作品集
 │   │   ├── share/                    # 分享链接页（照片/相册）
+│   │   ├── duplicates/page.tsx       # 感知哈希去重页（Phase 17）
+│   │   ├── timeline/page.tsx         # 时间轴视图（Phase 23）
+│   │   ├── favorites/page.tsx        # 收藏夹（Phase 25）
+│   │   ├── analytics/page.tsx        # 数据分析图表（Phase 28）
+│   │   ├── smart-albums/page.tsx     # 智能相册（Phase 27）
+│   │   ├── backup/page.tsx           # 数据备份导出（Phase 30）
+│   │   ├── notifications/page.tsx    # 通知中心（Phase 34）
 │   │   └── api/                      # Next.js 代理路由（见第九节）
 │   ├── context/AuthContext.tsx       # JWT + refresh token 会话管理
 │   └── components/
@@ -121,11 +149,14 @@ MinIO (内部，9001 仅 console)
 │       ├── PresetPanel.tsx           # 预设管理 + XMP 解析上传
 │       ├── ExportPanel.tsx           # 导出 + 水印叠加
 │       ├── CompareView.tsx           # 并排对比
-│       └── PhotoMapLeaflet.tsx       # 地图视图
+│       ├── PhotoMapLeaflet.tsx       # 地图视图
+│       ├── PhotoNotes.tsx            # 照片备注面板（Phase 23）
+│       ├── SlideshowModal.tsx        # 幻灯片放映（Phase 35）
+│       └── NotificationBell.tsx      # 通知铃铛下拉（Phase 34）
 ├── go-core/
-│   ├── main.go             # Fiber 路由 + 全部业务逻辑（~2924 行，75 路由）
+│   ├── main.go             # Fiber 路由 + 全部业务逻辑（~5263 行，~130 路由）
 │   ├── auth/jwt.go         # JWT GenerateAccessToken / ValidateAccessToken
-│   ├── models/models.go    # 14 个 GORM 模型
+│   ├── models/models.go    # 24 个 GORM 模型
 │   ├── database/db.go      # PostgreSQL 连接 + AutoMigrate + StorageConfig 初始化
 │   ├── storage/minio.go    # MinIO 客户端封装
 │   └── queue/redis.go      # Redis Streams 生产者封装
@@ -420,6 +451,20 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **v16.1–16.4** | `b4cfb2a` | 主色调提取：DominantColors jsonb + Worker PIL.quantize + _color_bucket 11桶 HSL分类 + PUT /internal/photos/:id/dominant-colors + GET /photos color_bucket 筛选 + 前端色块 UI |
 | AI 分析同结果 fix | `77fab1f` | AI_ANALYSIS_PROMPT placeholder bug 修复 + kimi PROVIDER_BASE_URLS 修复 + EN/ZH 提示词选择 |
 | **v17.1–17.4** | `ae3876a` | 感知哈希去重：PHash varchar(16) + math/bits Hamming + Union-Find + PUT /internal/photos/:id/phash + GET /api/photos/duplicates + imagehash worker步骤 + 前端去重页面 + 148/148 测试 |
+| **Phase 18** | `68fb211` | HIF/RAW AI 分析修复 + 照片详情 Re-analyze 按钮 + Admin AI 限速规则后台（AIRateLimit 模型）|
+| **Phase 19 v19.1–19.3** | `f03aac7` | 导出历史管理页（GET /api/exports + DELETE /api/exports/:id + 前端历史列表页）|
+| **Phase 20 v20.1–20.5** | `b9beb5a` | CLIP 本地自动标签（ViT-B-32，512 维余弦相似度）+ Worker photogiraffe_clip_tasks |
+| **Phase 21 v21.1–21.4** | `b47c116` | 地图 GPS 聚合（MarkerCluster）+ 日期范围过滤（shot_after/shot_before）+ shot_at 字段 |
+| **Phase 22 v22.1–22.9** | `24b8dc5` | 账号安全（修改密码/忘记密码邮件/登录历史）+ SMTP 配置后台（SmtpConfig/PasswordResetToken/LoginHistory 模型）|
+| **Phase 23 v23.1–23.5** | `dd6e5da` | 照片备注（PhotoNote 多条增删改）+ 时间轴视图（/api/photos/timeline 按月分组）|
+| **Phase 24 v24.1–24.4** | `ec5ff52` | PWA 增强（manifest.json + sw.js + 离线页 /offline + 安装提示 InstallPrompt）|
+| **Phase 25 v25.1–25.6** | `a0cc976` | 收藏夹（Favorite 模型 + /api/photos/favorites 视图 + bulk favorite/unfavorite）|
+| **Phase 26 v26.1–26.4** | `5443cfb` | 批量操作扩展（/api/photos/bulk 通用 endpoint + 前端多选悬浮操作栏）|
+| **Phase 27 v27.1–27.5** | `438594f` | 智能相册（SmartAlbum + rules jsonb + 实时过滤 + 前端管理页）|
+| **Phase 28 v28.1–28.5** | `46a891d` | 数据分析图表（月度/相机/焦段/ISO）+ Recharts 可视化 + /api/analytics/* |
+| **Phase 29 v29.1–29.5** | `9593c25` | 高级搜索增强（focal_min/GPS 半径/favorited 过滤/saved-searches）|
+| **Phase 30 v30.1–30.6** | `9f48741` | 数据备份导出（BackupJob + Worker ZIP + 下载链接 + 历史管理页）|
+| **Phase 31–36** | `967db9f` | 星级/颜色标签（Rating/ColorLabel）+ 标签管理 + 存储配额 + 通知中心 + 幻灯片 + 元数据编辑/批量时间偏移（299/301 测试）|
 
 ---
 
@@ -438,6 +483,9 @@ requireInternalSecret(secret)     // X-Internal-Secret 头校验（Worker 回调
 | **37** | **Phase 14 Roadmap（已完成）** |
 | **38** | **Phase 15 Roadmap（已完成）** |
 | **39** | **Phase 17 Roadmap（已完成）** (`outline/agent/39_Phase17_Roadmap.md`，含 Phase 16+17 交付记录）|
+| **40** | **版本号规范文档** (`outline/agent/40_VersionConvention.md`) |
+| **41–46** | Phase 18–30 各步骤规划文档 |
+| **47** | **Phase 31-36 Roadmap（已完成）** (`outline/agent/47_Phase31_36_Roadmap.md`，含 Phase 31-36 全部交付清单）|
 
 ---
 
@@ -520,48 +568,63 @@ docker exec photogiraffe-postgres psql -U postgres -d photogiraffe \
 
 ---
 
-## 十五、当前状态 & Phase 18 方向
+## 十五、当前状态（Phase 36）
 
-**HEAD**：`ae3876a` Phase 17 感知哈希去重（v17.1-v17.4）
-**集成测试**：**`148/148 PASS`** ✅
+**HEAD**：`967db9f` Phase 31-36: Ratings/ColorLabels/TagMgmt/Quota/Notifications/Slideshow/MetaEdit
+**集成测试**：**`299/301 PASS`** ✅（2 项预置失败与当前 Phase 无关）
 **全部服务**：正常运行于 Docker Compose
 
-### 最近完成阶段摘要
+### Phase 31-36 完整交付清单
 
-| 阶段 | Commit | 状态 | 内容摘要 |
-|------|--------|------|----------|
-| Phase 15 v15.1–15.4 | `d9a21c0` | ✅ | /internal/photos/:id/meta + frame engine（8 函数，3 主题，9 比例）+ ExportPanel 边框 UI |
-| Phase 16 v16.1–16.4 | `b4cfb2a` | ✅ | DominantColors jsonb + PIL.quantize + _color_bucket 11桶 + 颜色筛选 API + 前端色块 UI |
-| AI 分析 fix | `77fab1f` | ✅ | AI_ANALYSIS_PROMPT placeholder bug 修复 + kimi 修复 + EN/ZH 提示词语言选择 |
-| Phase 17 v17.1–17.4 | `ae3876a` | ✅ | PHash varchar(16) + Hamming/Union-Find + /phash 端点 + /duplicates API + Worker imagehash + 前端去重页 |
+| Phase | 子版本 | 状态 | 内容摘要 |
+|-------|--------|------|---------|
+| 31 | Rating + ColorLabel | ✅ | PATCH /api/photos/:id/rating + PATCH /api/photos/:id/color-label + PhotoCard 内联评分 UI |
+| 32 | Tag Management | ✅ | GET/PUT/POST/DELETE /api/tags + 全局标签管理页 + 重命名/合并/删除 |
+| 33 | Storage Quota | ✅ | User.StorageQuotaBytes/StorageUsedBytes + GET /api/storage/usage + PUT /api/admin/users/:id/quota |
+| 34 | Notifications | ✅ | Notification 模型 + GET/PUT/PUT:id/DELETE /api/notifications + NotificationBell 组件 |
+| 35 | Slideshow | ✅ | SlideshowModal.tsx（键盘 ←→/ESC，触摸滑动，自动播放）|
+| 36 | Metadata Edit + BatchDateShift | ✅ | PUT /api/photos/:id/metadata（描述/版权/创作者/标题/地点）+ POST /api/photos/batch-date-shift |
 
-### Phase 17 完整交付清单
-
-| 子版本 | 状态 | 内容摘要 |
-|--------|------|---------|
-| v17.1 | ✅ | models.go PHash *string gorm:"type:varchar(16)" + main.go math/bits + PUT /internal/photos/:id/phash + GET /api/photos/duplicates（Union-Find Hamming≤10）|
-| v17.2 | ✅ | requirements.txt imagehash + main.py import imagehash + step 6 phash 计算推送 |
-| v17.3 | ✅ | frontend/src/app/api/photos/duplicates/route.ts 代理 + duplicates/page.tsx 去重页面 + ClientLayout.tsx Copy 导航项 |
-| v17.4 | ✅ | tests/integration_test.py test_phase17() 6用例 + 148/148 + git commit `ae3876a` |
-
-### Phase 17 新增 API
+### Phase 31-36 新增 API（核心）
 
 | Method | Path | Auth | 说明 |
 |--------|------|------|------|
-| PUT | /internal/photos/:id/phash | X-Internal-Secret | Worker 写入 16字符 hex pHash（0行更新也返回 200）|
-| GET | /api/photos/duplicates | JWT Bearer | 返回 {groups, total_groups}，每组含 ≥2 张 Hamming≤10 的相似照片 |
+| PATCH | /api/photos/:id/rating | JWT（同属）| 设置星级评分（0=清除，1-5）|
+| PATCH | /api/photos/:id/color-label | JWT（同属）| 设置颜色标签 |
+| GET | /api/tags | JWT | 当前用户全部标签 + 引用次数 |
+| PUT | /api/tags | JWT | 重命名标签 |
+| POST | /api/tags | JWT | 合并标签（sources[] → target）|
+| DELETE | /api/tags/:name | JWT | 删除标签（从所有照片移除）|
+| GET | /api/storage/usage | JWT | 已用/配额（字节）|
+| PUT | /api/admin/users/:id/quota | JWT+SA | 调整用户配额 |
+| GET | /api/notifications | JWT | 通知列表 + 未读数 |
+| PUT | /api/notifications | JWT | 全部标记已读 |
+| PUT | /api/notifications/:id | JWT | 标记单条已读 |
+| DELETE | /api/notifications/:id | JWT | 删除通知 |
+| PUT | /api/photos/:id/metadata | JWT（同属）| 批量编辑元数据字段 |
+| POST | /api/photos/batch-date-shift | JWT | 批量时间偏移（时区校正）|
 
-### Phase 18 方向（待规划）
+### 近期完成阶段摘要
+
+| 阶段 | Commit | 状态 | 内容摘要 |
+|------|--------|------|----------|
+| Phase 29–30 | `9f48741` | ✅ | 高级搜索增强 + 数据备份 BackupJob |
+| Phase 31 | `967db9f`（部分）| ✅ | 星级评分 + 颜色标签 |
+| Phase 32 | `967db9f`（部分）| ✅ | 全局标签管理 CRUD |
+| Phase 33 | `967db9f`（部分）| ✅ | 存储配额 + 用量 API |
+| Phase 34 | `967db9f`（部分）| ✅ | 通知中心 |
+| Phase 35 | `967db9f`（部分）| ✅ | 幻灯片放映 SlideshowModal |
+| Phase 36 | `967db9f` | ✅ | 元数据编辑 + 批量时间偏移，**299/301 测试** |
+
+### Phase 37 方向（待规划）
 
 | 优先级 | 方向 | 说明 |
 |--------|------|------|
-| 中 | 导出历史页 | 独立导出历史管理界面 + 状态跟踪 |
-| 低 | AI 自动标签 | CLIP/BLIP 等模型批量添加语义标签 |
-| 低 | 地图聚类优化 | MarkerCluster 替换当前单点渲染 |
+| 待定 | — | 下一 Phase 待 Product Backlog 确认后规划 |
 
 **开始下一 Phase 步骤**：
 1. 在 `outline/agent/` 创建新 Phase Roadmap 文档
-2. 按规范实现 → build → 148/148 test → commit
+2. 按规范实现 → build → 299/301 test → commit
 3. 完成后更新第十节版本历史和本节
 
 ---
