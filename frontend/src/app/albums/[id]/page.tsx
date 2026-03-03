@@ -6,8 +6,9 @@ import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import {
   ArrowLeft, Trash2, Loader2, Share2, Link2, Link2Off,
-  Pencil, Check, X, Images, Plus, Archive, Download, AlertCircle, CheckCircle
+  Pencil, Check, X, Images, Plus, Archive, Download, AlertCircle, CheckCircle, Play,
 } from "lucide-react";
+import SlideshowModal from "@/components/SlideshowModal";
 
 interface Photo {
   ID: number;
@@ -55,6 +56,8 @@ export default function AlbumDetailPage() {
   const [albumJobId, setAlbumJobId] = useState<number | null>(null);
   const [albumDownloadUrl, setAlbumDownloadUrl] = useState<string | null>(null);
   const [albumExportError, setAlbumExportError] = useState("");
+  // Phase 35 — Slideshow
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -252,8 +255,18 @@ export default function AlbumDetailPage() {
           )}
         </div>
 
-        {/* Share controls */}
-        <div className="flex items-center gap-2 shrink-0">
+          {/* Share controls */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Slideshow button */}
+            {(album.Photos?.length ?? 0) > 0 && (
+              <button
+                onClick={() => setSlideshowOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 rounded-lg transition-colors"
+              >
+                <Play className="w-3.5 h-3.5" />
+                幻灯片
+              </button>
+            )}
           {album.ShareToken ? (
             <>
               <button

@@ -14,6 +14,8 @@ interface Photo {
   UploadedAt: string;
   DominantColors?: string | null; // JSON [{hex,bucket,pct},...]
   IsFavorited?: boolean; // Phase 25: comes from PhotoWithFav wrapper
+  Rating?: number;       // Phase 31
+  ColorLabel?: string;   // Phase 31: ""|red|orange|yellow|green|blue|purple
 }
 
 interface PhotoGridProps {
@@ -164,6 +166,30 @@ function PhotoCard({
       {!selectable && photo.IsFavorited && (
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
           <Heart className="w-4 h-4 drop-shadow-md" style={{ fill: "#f43f5e", color: "#f43f5e" }} />
+        </div>
+      )}
+
+      {/* Phase 31 — Color label dot */}
+      {!selectable && photo.ColorLabel && (() => {
+        const colorMap: Record<string, string> = {
+          red: "#ef4444", orange: "#f97316", yellow: "#eab308",
+          green: "#22c55e", blue: "#3b82f6", purple: "#a855f7",
+        };
+        const hex = colorMap[photo.ColorLabel];
+        return hex ? (
+          <div className="absolute top-2 right-2 z-10 pointer-events-none">
+            <span className="w-3 h-3 rounded-full block border border-white/40 shadow"
+              style={{ background: hex }} />
+          </div>
+        ) : null;
+      })()}
+
+      {/* Phase 31 — Star rating badge (visible in hover overlay bottom-right) */}
+      {!selectable && (photo.Rating ?? 0) > 0 && (
+        <div className="absolute bottom-2 right-2 z-10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-black/60 text-yellow-400">
+            {'★'.repeat(photo.Rating!)}
+          </span>
         </div>
       )}
 

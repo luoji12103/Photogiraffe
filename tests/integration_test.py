@@ -850,6 +850,11 @@ def main():
     test_phase28(token)
     test_phase29(token)
     test_phase30(token)
+    test_phase31(token)
+    test_phase32(token)
+    test_phase33(token)
+    test_phase34(token)
+    test_phase36(token)
 
     # Summary
     total = len(passes) + len(failures)
@@ -1434,6 +1439,152 @@ def test_phase30(token):
         print(f"  {SKIP} Phase 30 single-job tests (create failed)")
 
 
+
+
+def test_phase31(token):
+    section("v0.31  Photo Ratings & Color Labels")
+
+    # -- Unauthenticated --
+    _, status, _ = http("PATCH", "/api/photos/1/rating")
+    check("PATCH /api/photos/1/rating without token -> 401", status == 401, f"status={status}")
+
+    _, status, _ = http("PATCH", "/api/photos/1/color-label")
+    check("PATCH /api/photos/1/color-label without token -> 401", status == 401, f"status={status}")
+
+    # -- Non-existent photo --
+    d, status, _ = http("PATCH", "/api/photos/9999999/rating", body={"rating": 3}, token=token)
+    check("PATCH /api/photos/9999999/rating -> 404", status == 404, f"status={status}")
+
+    d, status, _ = http("PATCH", "/api/photos/9999999/color-label", body={"color_label": "red"}, token=token)
+    check("PATCH /api/photos/9999999/color-label -> 404", status == 404, f"status={status}")
+
+    # -- bulk set_rating & set_color_label --
+    d, status, _ = http("POST", "/api/photos/bulk",
+                        body={"ids": [9999999], "action": "set_rating", "rating": 4}, token=token)
+    check("POST /api/photos/bulk set_rating -> 200", status == 200, f"status={status}")
+
+    d, status, _ = http("POST", "/api/photos/bulk",
+                        body={"ids": [9999999], "action": "set_color_label", "color_label": "blue"}, token=token)
+    check("POST /api/photos/bulk set_color_label -> 200", status == 200, f"status={status}")
+
+    # -- Search with rating_min --
+    d, status, _ = http("GET", "/api/photos/search?rating_min=3", token=token)
+    check("GET /api/photos/search?rating_min=3 -> 200", status == 200, f"status={status}")
+    check("rating_min search has 'photos'", isinstance(d, dict) and "photos" in d, d)
+
+    # -- Search with color_label --
+    d, status, _ = http("GET", "/api/photos/search?color_label=red", token=token)
+    check("GET /api/photos/search?color_label=red -> 200", status == 200, f"status={status}")
+    check("color_label search has 'photos'", isinstance(d, dict) and "photos" in d, d)
+
+
+def test_phase32(token):
+    section("v0.32  Tag Management")
+
+    # -- Unauthenticated --
+    _, status, _ = http("GET", "/api/tags")
+    check("GET /api/tags without token -> 401", status == 401, f"status={status}")
+
+    # -- List tags --
+    d, status, _ = http("GET", "/api/tags", token=token)
+    check("GET /api/tags -> 200", status == 200, f"status={status}")
+    check("tags response is list", isinstance(d, list), d)
+
+    # -- Rename tag (non-existent) --
+    d, status, _ = http("PUT", "/api/tags",
+                        body={"old_name": "nonexistent_tag_xyz", "new_name": "renamed_xyz"}, token=token)
+    check("PUT /api/tags rename non-existent -> 200 or 404", status in (200, 404), f"status={status}")
+
+    # -- Merge tags (non-existent) --
+    d, status, _ = http("POST", "/api/tags",
+                        body={"source": "nonexistent_src", "target": "nonexistent_dst"}, token=token)
+    check("POST /api/tags merge non-existent -> 200 or 404", status in (200, 404), f"status={status}")
+
+    # -- Delete tag (non-existent) --
+    d, status, _ = http("DELETE", "/api/tags/nonexistent_tag_xyz", token=token)
+    check("DELETE /api/tags/:name non-existent -> 200 or 404", status in (200, 404), f"status={status}")
+
+    # -- Missing fields validation --
+    d, status, _ = http("PUT", "/api/tags", body={"old_name": ""}, token=token)
+    check("PUT /api/tags missing new_name -> 400", status == 400, f"status={status}")
+
+    d, status, _ = http("POST", "/api/tags", body={"source": ""}, token=token)
+    check("POST /api/tags missing target -> 400", status == 400, f"status={status}")
+
+
+def test_phase33(token):
+    section("v0.33  Storage Quota Management")
+
+    # -- Unauthenticated --
+    _, status, _ = http("GET", "/api/storage/usage")
+    check("GET /api/storage/usage without token -> 401", status == 401, f"status={status}")
+
+    # -- Get usage --
+    d, status, _ = http("GET", "/api/storage/usage", token=token)
+    check("GET /api/storage/usage -> 200", status == 200, f"status={status}")
+    check("usage has 'used_bytes'", isinstance(d, dict) and "used_bytes" in d, d)
+    check("usage has 'quota_bytes'", isinstance(d, dict) and "quota_bytes" in d, d)
+
+    # -- Admin set quota (non-existent user) --
+    d, status, _ = http("PUT", "/api/admin/users/9999999/quota",
+                        body={"quota_bytes": 5368709120}, token=token)
+    check("PUT /api/admin/users/:id/quota -> 200 or 403 or 404", status in (200, 403, 404), f"status={status}")
+
+
+def test_phase34(token):
+    section("v0.34  Notification Center")
+
+    # -- Unauthenticated --
+    _, status, _ = http("GET", "/api/notifications")
+    check("GET /api/notifications without token -> 401", status == 401, f"status={status}")
+
+    # -- List notifications --
+    d, status, _ = http("GET", "/api/notifications", token=token)
+    check("GET /api/notifications -> 200", status == 200, f"status={status}")
+    check("notifications has 'notifications'", isinstance(d, dict) and "notifications" in d, d)
+    check("notifications has 'total'", isinstance(d, dict) and "total" in d, d)
+
+    # -- Mark all read --
+    d, status, _ = http("PUT", "/api/notifications", token=token)
+    check("PUT /api/notifications (read all) -> 200", status == 200, f"status={status}")
+
+    # -- Non-existent notification --
+    d, status, _ = http("PUT", "/api/notifications/9999999", token=token)
+    check("PUT /api/notifications/9999999 mark read -> 404", status == 404, f"status={status}")
+
+    d, status, _ = http("DELETE", "/api/notifications/9999999", token=token)
+    check("DELETE /api/notifications/9999999 -> 404", status == 404, f"status={status}")
+
+    # -- unread_only filter --
+    d, status, _ = http("GET", "/api/notifications?unread_only=true", token=token)
+    check("GET /api/notifications?unread_only=true -> 200", status == 200, f"status={status}")
+
+
+def test_phase36(token):
+    section("v0.36  Photo Metadata Edit (DB-only)")
+
+    # -- Unauthenticated --
+    _, status, _ = http("PUT", "/api/photos/1/metadata")
+    check("PUT /api/photos/1/metadata without token -> 401", status == 401, f"status={status}")
+
+    # -- Non-existent photo --
+    d, status, _ = http("PUT", "/api/photos/9999999/metadata",
+                        body={"description": "test", "taken_at": "", "latitude": None,
+                              "longitude": None, "copyright": "", "creator": ""},
+                        token=token)
+    check("PUT /api/photos/9999999/metadata -> 404", status == 404, f"status={status}")
+
+    # -- Batch date shift (unauthenticated) --
+    _, status, _ = http("POST", "/api/photos/batch-date-shift")
+    check("POST /api/photos/batch-date-shift without token -> 401", status == 401, f"status={status}")
+
+    # -- Batch date shift (non-existent photos) --
+    d, status, _ = http("POST", "/api/photos/batch-date-shift",
+                        body={"ids": [9999999], "offset_seconds": 3600},
+                        token=token)
+    check("POST /api/photos/batch-date-shift -> 200", status == 200, f"status={status}")
+    check("batch-date-shift has 'updated'", isinstance(d, dict) and "updated" in d, d)
+
+
 if __name__ == "__main__":
     main()
-

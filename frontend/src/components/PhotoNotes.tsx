@@ -116,7 +116,7 @@ export default function PhotoNotes({ photoId }: Props) {
                 ) : (
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-zinc-200 whitespace-pre-wrap leading-relaxed">{n.content}</span>
-                    {user && (n.user_id === user.id || user.role === "SuperAdmin") && (
+                    {user && (String(n.user_id) === user.id || user.role === "SuperAdmin") && (
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                         <button onClick={() => startEdit(n)} className="p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-zinc-300">
                           <Pencil size={11} />

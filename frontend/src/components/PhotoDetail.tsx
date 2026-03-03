@@ -49,6 +49,8 @@ interface Photo {
   AIAnalysis?: string | null; // null when AI analysis not yet performed
   InferredParams?: string | null; // null when AI param inference not yet run
   AutoTags?: string | null; // null when CLIP auto-tag not yet run; JSON array of strings
+  Rating?: number;      // Phase 31: 0-5
+  ColorLabel?: string;  // Phase 31: ""|red|orange|yellow|green|blue|purple
 }
 
 interface PhotoDetailProps {
@@ -73,6 +75,19 @@ export default function PhotoDetail({ photo: initialPhoto, isFavorited: initialF
   const [inferredSuggestion, setInferredSuggestion] = useState<AdjustParams | null>(null);
   const [adjustParams, setAdjustParams] = useState<AdjustParams>(DEFAULT_ADJUST);
   const [editMode, setEditMode] = useState(false);
+  // Phase 31 — Rating & ColorLabel
+  const [rating, setRating] = useState(initialPhoto.Rating ?? 0);
+  const [colorLabel, setColorLabel] = useState(initialPhoto.ColorLabel ?? "");
+  const [ratingLoading, setRatingLoading] = useState(false);
+  // Phase 36 — EXIF metadata editing
+  const [metaEdit, setMetaEdit] = useState(false);
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [metaDescription, setMetaDescription] = useState("");
+  const [metaDate, setMetaDate] = useState("");
+  const [metaLat, setMetaLat] = useState("");
+  const [metaLng, setMetaLng] = useState("");
+  const [metaCopyright, setMetaCopyright] = useState("");
+  const [metaCreator, setMetaCreator] = useState("");
   const display = useDisplayDetect();
   const { authFetch, user } = useAuth();
 

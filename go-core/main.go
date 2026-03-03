@@ -83,6 +83,17 @@ func broadcastToUser(userID uint, eventType, data string) {
 	}
 }
 
+// createNotification persists a Notification row for the user (Phase 34).
+func createNotification(userID uint, notifType, title, body string) {
+	database.DB.Create(&models.Notification{
+		UserID: userID,
+		Type:   notifType,
+		Title:  title,
+		Body:   body,
+		IsRead: false,
+	})
+}
+
 // requireJWT validates the Authorization: Bearer <jwt> header.
 // The JWT carries a UUID public ID (never the sequential integer PK);
 // this middleware resolves it to the internal integer ID via an indexed lookup.
@@ -2367,9 +2378,11 @@ func main() {
 		uid := userIDFromLocals(c)
 		role := c.Locals("userRole").(string)
 		var body struct {
-			IDs    []uint `json:"ids"`
-			Action string `json:"action"`
-			Tag    string `json:"tag"` // for add_tag / remove_tag
+			IDs        []uint `json:"ids"`
+			Action     string `json:"action"`
+			Tag        string `json:"tag"`         // for add_tag / remove_tag
+			Rating     int    `json:"rating"`      // for set_rating
+			ColorLabel string `json:"color_label"` // for set_color_label
 		}
 		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 || body.Action == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids and action required"})
@@ -2445,6 +2458,25 @@ func main() {
 		case "unstar":
 			result := database.DB.Where("user_id = ? AND photo_id IN ?", uid, body.IDs).Delete(&models.Favorite{})
 			return c.JSON(fiber.Map{"action": "unstar", "count": result.RowsAffected})
+
+		case "set_rating":
+			if body.Rating < 0 || body.Rating > 5 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rating must be 0-5"})
+			}
+			qr := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
+			if role != "SuperAdmin" {
+				qr = qr.Where("user_id = ?", uid)
+			}
+			resr := qr.Update("rating", body.Rating)
+			return c.JSON(fiber.Map{"action": "set_rating", "count": resr.RowsAffected})
+
+		case "set_color_label":
+			qcl := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
+			if role != "SuperAdmin" {
+				qcl = qcl.Where("user_id = ?", uid)
+			}
+			rescl := qcl.Update("color_label", body.ColorLabel)
+			return c.JSON(fiber.Map{"action": "set_color_label", "count": rescl.RowsAffected})
 
 		default:
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown action: " + body.Action})
@@ -4804,6 +4836,424 @@ func main() {
 		}
 		// Basic validation passed — actual connectivity test would require re-initializing client
 		return c.JSON(fiber.Map{"ok": true, "backend": cfg.Backend, "endpoint": cfg.Endpoint, "bucket": cfg.Bucket})
+	})
+
+
+	// ─────────────────────────────────────────────────────────────────
+	// Phase 31 — Per-photo Rating & Color Label
+	// ─────────────────────────────────────────────────────────────────
+
+	// PATCH /api/photos/:id/rating — set rating 0–5 (0 = unrated)
+	app.Patch("/api/photos/:id/rating", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		pid, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var body struct {
+			Rating int `json:"rating"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Rating < 0 || body.Rating > 5 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rating must be 0-5"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		res := q.Update("rating", body.Rating)
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		return c.JSON(fiber.Map{"id": pid, "rating": body.Rating})
+	})
+
+	// PATCH /api/photos/:id/color-label — set color label
+	app.Patch("/api/photos/:id/color-label", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		pid, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var body struct {
+			ColorLabel string `json:"color_label"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		res := q.Update("color_label", body.ColorLabel)
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		return c.JSON(fiber.Map{"id": pid, "color_label": body.ColorLabel})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// Phase 32 — Tag Management
+	// ─────────────────────────────────────────────────────────────────
+
+	// GET /api/tags — list all tags with counts for current user
+	app.Get("/api/tags", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+
+		type TagCount struct {
+			Tag   string `json:"tag"`
+			Count int64  `json:"count"`
+		}
+		var photos []models.Photo
+		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL AND status = 'completed'")
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		q.Select("tags").Find(&photos)
+
+		tagCounts := make(map[string]int64)
+		for _, p := range photos {
+			if p.Tags == nil {
+				continue
+			}
+			var tags []string
+			if err := json.Unmarshal([]byte(*p.Tags), &tags); err == nil {
+				for _, t := range tags {
+					tagCounts[t]++
+				}
+			}
+		}
+		result := make([]TagCount, 0, len(tagCounts))
+		for t, cnt := range tagCounts {
+			result = append(result, TagCount{Tag: t, Count: cnt})
+		}
+		return c.JSON(result)
+	})
+
+	// PUT /api/tags — rename tag {old_name, new_name}
+	app.Put("/api/tags", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			OldName string `json:"old_name"`
+			NewName string `json:"new_name"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.OldName == "" || body.NewName == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "old_name and new_name required"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		var photos []models.Photo
+		q.Find(&photos)
+		updated := int64(0)
+		for _, p := range photos {
+			if p.Tags == nil {
+				continue
+			}
+			var tags []string
+			if err := json.Unmarshal([]byte(*p.Tags), &tags); err != nil {
+				continue
+			}
+			changed := false
+			for i, t := range tags {
+				if t == body.OldName {
+					tags[i] = body.NewName
+					changed = true
+				}
+			}
+			if changed {
+				b, _ := json.Marshal(tags)
+				bs := string(b)
+				database.DB.Model(&p).Update("tags", &bs)
+				updated++
+			}
+		}
+		return c.JSON(fiber.Map{"old_name": body.OldName, "new_name": body.NewName, "updated": updated})
+	})
+
+	// POST /api/tags — merge tags {source, target}
+	app.Post("/api/tags", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.Source == "" || body.Target == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "source and target required"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		var photos []models.Photo
+		q.Find(&photos)
+		updated := int64(0)
+		for _, p := range photos {
+			if p.Tags == nil {
+				continue
+			}
+			var tags []string
+			if err := json.Unmarshal([]byte(*p.Tags), &tags); err != nil {
+				continue
+			}
+			changed := false
+			hasTarget := false
+			newTags := make([]string, 0, len(tags))
+			for _, t := range tags {
+				if t == body.Target {
+					hasTarget = true
+				}
+				if t == body.Source {
+					changed = true
+					continue // will add target if not already present
+				}
+				newTags = append(newTags, t)
+			}
+			if changed {
+				if !hasTarget {
+					newTags = append(newTags, body.Target)
+				}
+				b, _ := json.Marshal(newTags)
+				bs := string(b)
+				database.DB.Model(&p).Update("tags", &bs)
+				updated++
+			}
+		}
+		return c.JSON(fiber.Map{"source": body.Source, "target": body.Target, "updated": updated})
+	})
+
+	// DELETE /api/tags/:name — remove tag from all photos
+	app.Delete("/api/tags/:name", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		tagName := c.Params("name")
+		if tagName == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tag name required"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		var photos []models.Photo
+		q.Find(&photos)
+		updated := int64(0)
+		for _, p := range photos {
+			if p.Tags == nil {
+				continue
+			}
+			var tags []string
+			if err := json.Unmarshal([]byte(*p.Tags), &tags); err != nil {
+				continue
+			}
+			newTags := make([]string, 0, len(tags))
+			changed := false
+			for _, t := range tags {
+				if t == tagName {
+					changed = true
+					continue
+				}
+				newTags = append(newTags, t)
+			}
+			if changed {
+				if len(newTags) == 0 {
+					database.DB.Model(&p).Update("tags", nil)
+				} else {
+					b, _ := json.Marshal(newTags)
+					bs := string(b)
+					database.DB.Model(&p).Update("tags", &bs)
+				}
+				updated++
+			}
+		}
+		return c.JSON(fiber.Map{"tag": tagName, "updated": updated})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// Phase 33 — Storage Quota Management
+	// ─────────────────────────────────────────────────────────────────
+
+	// GET /api/storage/usage — get current user's storage stats
+	app.Get("/api/storage/usage", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		var user models.User
+		if err := database.DB.First(&user, uid).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+		}
+		return c.JSON(fiber.Map{
+			"used_bytes":  user.StorageUsedBytes,
+			"quota_bytes": user.StorageQuotaBytes,
+		})
+	})
+
+	// PUT /api/admin/users/:id/quota — set quota (SuperAdmin only)
+	app.Put("/api/admin/users/:id/quota", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		targetID, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var body struct {
+			QuotaBytes int64 `json:"quota_bytes"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.QuotaBytes <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "quota_bytes required"})
+		}
+		res := database.DB.Model(&models.User{}).Where("id = ?", targetID).Update("storage_quota_bytes", body.QuotaBytes)
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+		}
+		return c.JSON(fiber.Map{"id": targetID, "quota_bytes": body.QuotaBytes})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// Phase 34 — Notification Center
+	// ─────────────────────────────────────────────────────────────────
+
+	// GET /api/notifications — list notifications with pagination
+	app.Get("/api/notifications", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+		unreadOnly := c.Query("unread_only", "") == "true"
+
+		q := database.DB.Model(&models.Notification{}).Where("user_id = ?", uid)
+		if unreadOnly {
+			q = q.Where("is_read = false")
+		}
+		var total int64
+		q.Count(&total)
+		var notifications []models.Notification
+		q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&notifications)
+		return c.JSON(fiber.Map{
+			"notifications": notifications,
+			"total":         total,
+			"page":          page,
+			"limit":         limit,
+		})
+	})
+
+	// PUT /api/notifications — mark all as read
+	app.Put("/api/notifications", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		database.DB.Model(&models.Notification{}).Where("user_id = ? AND is_read = false", uid).Update("is_read", true)
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	// PUT /api/notifications/:id — mark one as read
+	app.Put("/api/notifications/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		nid, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		res := database.DB.Model(&models.Notification{}).Where("id = ? AND user_id = ?", nid, uid).Update("is_read", true)
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	// DELETE /api/notifications/:id — delete one notification
+	app.Delete("/api/notifications/:id", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		nid, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		res := database.DB.Where("id = ? AND user_id = ?", nid, uid).Delete(&models.Notification{})
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
+		}
+		return c.JSON(fiber.Map{"deleted": true})
+	})
+
+	// ─────────────────────────────────────────────────────────────────
+	// Phase 36 — Photo Metadata Edit (DB-only) & Batch Date Shift
+	// ─────────────────────────────────────────────────────────────────
+
+	// PUT /api/photos/:id/metadata — update description, taken_at, GPS, copyright, creator
+	app.Put("/api/photos/:id/metadata", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		pid, err := c.ParamsInt("id")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		}
+		var body struct {
+			Description *string  `json:"description"`
+			TakenAt     *string  `json:"taken_at"`
+			Latitude    *float64 `json:"latitude"`
+			Longitude   *float64 `json:"longitude"`
+			Copyright   *string  `json:"copyright"`
+			Creator     *string  `json:"creator"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		updates := map[string]interface{}{}
+		if body.Description != nil {
+			updates["description"] = *body.Description
+		}
+		if body.TakenAt != nil {
+			updates["taken_at"] = *body.TakenAt
+		}
+		if body.Latitude != nil {
+			updates["latitude"] = *body.Latitude
+		}
+		if body.Longitude != nil {
+			updates["longitude"] = *body.Longitude
+		}
+		if body.Copyright != nil {
+			updates["copyright_notice"] = *body.Copyright
+		}
+		if body.Creator != nil {
+			updates["creator"] = *body.Creator
+		}
+		if len(updates) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no fields to update"})
+		}
+		res := q.Updates(updates)
+		if res.RowsAffected == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
+		}
+		return c.JSON(fiber.Map{"id": pid, "updated": true})
+	})
+
+	// POST /api/photos/batch-date-shift — shift taken_at by offset_seconds for multiple photos
+	app.Post("/api/photos/batch-date-shift", requireJWT(), func(c *fiber.Ctx) error {
+		uid := userIDFromLocals(c)
+		role := c.Locals("userRole").(string)
+		var body struct {
+			IDs           []uint `json:"ids"`
+			OffsetSeconds int    `json:"offset_seconds"`
+		}
+		if err := c.BodyParser(&body); err != nil || len(body.IDs) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids and offset_seconds required"})
+		}
+		q := database.DB.Model(&models.Photo{}).Where("id IN ? AND taken_at IS NOT NULL", body.IDs)
+		if role != "SuperAdmin" {
+			q = q.Where("user_id = ?", uid)
+		}
+		res := q.UpdateColumn("taken_at", gorm.Expr("taken_at + make_interval(secs => ?)", body.OffsetSeconds))
+		return c.JSON(fiber.Map{"updated": res.RowsAffected})
 	})
 
 	fmt.Println("Starting Go Core API on :8080...")

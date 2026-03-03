@@ -9,12 +9,15 @@ import (
 
 type User struct {
 	gorm.Model
-	PublicID     string `gorm:"uniqueIndex"` // UUID v4 — safe for external exposure; auto-set by BeforeCreate
-	Username     string `gorm:"uniqueIndex;not null"`
-	Email        string `gorm:"uniqueIndex;not null"`
-	PasswordHash string `gorm:"not null"`
-	Role         string `gorm:"default:'StandardUser'"` // e.g., SuperAdmin, StandardUser
-	Photos       []Photo
+	PublicID          string `gorm:"uniqueIndex"` // UUID v4 — safe for external exposure; auto-set by BeforeCreate
+	Username          string `gorm:"uniqueIndex;not null"`
+	Email             string `gorm:"uniqueIndex;not null"`
+	PasswordHash      string `gorm:"not null"`
+	Role              string `gorm:"default:'StandardUser'"` // e.g., SuperAdmin, StandardUser
+	Photos            []Photo
+	// ─── Phase 33 — Storage Quota ───
+	StorageQuotaBytes int64  `gorm:"default:10737418240"` // 10 GB default
+	StorageUsedBytes  int64  `gorm:"default:0"`
 }
 
 // BeforeCreate auto-generates a UUID v4 PublicID if not already set.
@@ -42,6 +45,9 @@ type Photo struct {
 	DominantColors   *string `gorm:"type:jsonb"`    // nullable; [{hex,bucket,pct},...] extracted by worker
 	PHash            *string `gorm:"type:varchar(16)"` // nullable; 64-bit perceptual hash as 16-char hex, computed by worker
 	AutoTags         *string `gorm:"type:jsonb"`    // nullable; AI auto-tags from CLIP zero-shot classification
+	// ─── Phase 31 ───
+	Rating     int    `gorm:"default:0"`  // 0 = unrated, 1–5
+	ColorLabel string `gorm:"default:''"` // "" | red | orange | yellow | green | blue | purple
 }
 
 // AIRateLimit configures call-rate limits for the AI analysis endpoint.
@@ -281,4 +287,16 @@ type BackupJob struct {
 	OutputPath   string     // MinIO path of the zip file (set when completed)
 	ErrorMessage string     // error detail when failed
 	CompletedAt  *time.Time // nullable
+}
+
+// ─── Phase 34 — Notification Center ─────────────────────────────────────────
+
+// Notification persists an in-app notification for a user.
+type Notification struct {
+	gorm.Model
+	UserID uint   `gorm:"not null;index"`
+	Type   string `gorm:"not null"` // upload_done | ai_done | export_done | backup_done | info
+	Title  string `gorm:"not null"`
+	Body   string `gorm:"type:text"`
+	IsRead bool   `gorm:"default:false"`
 }

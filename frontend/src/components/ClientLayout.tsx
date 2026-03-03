@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Aperture, LogOut, Settings, Shield, MapPin, Images,
   UserCircle, Search, LayoutDashboard, Sun, Moon, Monitor,
-  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download, CalendarDays, Heart, Sparkles, BarChart3, HardDrive,
+  PanelLeftClose, PanelLeftOpen, ImageIcon, ChevronDown, Copy, Download, CalendarDays, Heart, Sparkles, BarChart3, HardDrive, Bell,
 } from "lucide-react";
 import InstallPrompt from "./InstallPrompt";
 
@@ -41,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/map", icon: MapPin, label: "地图", mobile: false },
   { href: "/duplicates", icon: Copy, label: "去重", mobile: false },
   { href: "/exports", icon: Download, label: "导出", mobile: false },
+  { href: "/notifications", icon: Bell, label: "通知", mobile: true },
   { href: "/profile", icon: UserCircle, label: "个人", mobile: true },
   { href: "/admin", icon: Shield, label: "管理", adminOnly: true, mobile: false },
   { href: "/settings", icon: Settings, label: "设置", adminOnly: true, mobile: false },

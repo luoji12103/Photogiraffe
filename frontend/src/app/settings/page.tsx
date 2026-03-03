@@ -124,6 +124,10 @@ export default function SettingsPage() {
   const [loginHistory, setLoginHistory] = useState<LoginEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
+  // Phase 33 — Storage Usage (own quota)
+  type StorageUsage = { quota_bytes: number; used_bytes: number; available_bytes: number; percent: number };
+  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
+
   // SMTP Config
   const [smtpCfg, setSmtpCfg] = useState({ host: "", port: 587, username: "", password: "", from_name: "Photogiraffe", use_tls: true, enabled: false });
   const [smtpLoading, setSmtpLoading] = useState(false);
@@ -147,6 +151,7 @@ export default function SettingsPage() {
     if (tab === "account") {
       fetchLoginHistory();
       if (user) { setProfUsername(user.username); setProfEmail(user.email); }
+      authFetch("/api/storage/usage").then(r => r.ok ? r.json() : null).then(d => d && setStorageUsage(d));
     }
   }, [tab, isSuperAdmin]);
 
