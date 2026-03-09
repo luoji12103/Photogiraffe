@@ -23,9 +23,6 @@ type Claims struct {
 
 func jwtSecret() []byte {
 	s := os.Getenv("JWT_SECRET")
-	if s == "" {
-		s = "photogiraffe_dev_secret_change_me"
-	}
 	return []byte(s)
 }
 

@@ -316,9 +316,12 @@ func recordLoginHistory(userID uint, ip, ua string, success bool) {
 }
 
 func main() {
-	// JWT secret — fall back to dev default but warn
-	if os.Getenv("JWT_SECRET") == "" {
-		log.Println("WARNING: JWT_SECRET not set. Using insecure default. Set JWT_SECRET in production!")
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET must be set. Refusing to start without JWT signing secret.")
+	}
+	if len(jwtSecret) < 32 {
+		log.Fatal("JWT_SECRET must be at least 32 characters.")
 	}
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 	if internalSecret == "" {
@@ -1064,11 +1067,11 @@ func main() {
 
 		totalPages := int((total + int64(limit) - 1) / int64(limit))
 		return c.JSON(fiber.Map{
-			"photos":       photoResp,
-			"total":        total,
-			"page":         page,
-			"limit":        limit,
-			"total_pages":  totalPages,
+			"photos":      photoResp,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
 		})
 	})
 
@@ -2121,8 +2124,8 @@ func main() {
 
 		type JobDTO struct {
 			models.ExportJob
-			PhotoThumbnail  string `json:"photo_thumbnail"`
-			PhotoFilename   string `json:"photo_filename"`
+			PhotoThumbnail string `json:"photo_thumbnail"`
+			PhotoFilename  string `json:"photo_filename"`
 		}
 
 		var total int64
@@ -2798,9 +2801,9 @@ func main() {
 	app.Get("/api/analytics/summary", requireJWT(), func(c *fiber.Ctx) error {
 		uid := userIDFromLocals(c)
 		type Summary struct {
-			TotalPhotos   int64 `json:"total_photos"`
-			TotalFavorites int64 `json:"total_favorites"`
-			TotalAlbums   int64 `json:"total_albums"`
+			TotalPhotos      int64 `json:"total_photos"`
+			TotalFavorites   int64 `json:"total_favorites"`
+			TotalAlbums      int64 `json:"total_albums"`
 			TotalSmartAlbums int64 `json:"total_smart_albums"`
 		}
 		var s Summary
@@ -4837,7 +4840,6 @@ func main() {
 		// Basic validation passed — actual connectivity test would require re-initializing client
 		return c.JSON(fiber.Map{"ok": true, "backend": cfg.Backend, "endpoint": cfg.Endpoint, "bucket": cfg.Bucket})
 	})
-
 
 	// ─────────────────────────────────────────────────────────────────
 	// Phase 31 — Per-photo Rating & Color Label
