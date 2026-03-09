@@ -27,6 +27,7 @@ import (
 	"photogiraffe/core/queue"
 	"photogiraffe/core/storage"
 
+	"github.com/go-redis/cache/v9"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/csrf"
@@ -416,6 +417,11 @@ func main() {
 
 	// Initialize Redis Client
 	queue.InitRedis()
+
+	// Initialize Redis Cache
+	redisCache := cache.New(&cache.Options{
+		Redis: queue.RedisClient,
+	})
 
 	app := fiber.New(fiber.Config{
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
@@ -1166,32 +1172,24 @@ func main() {
 		var total int64
 		database.DB.Model(&models.Favorite{}).Where("user_id = ?", uid).Count(&total)
 
-		var favs []models.Favorite
-		database.DB.Where("user_id = ?", uid).Order("created_at desc").Limit(limit).Offset(offset).Find(&favs)
-
-		photoIDs := make([]uint, 0, len(favs))
-		for _, f := range favs {
-			photoIDs = append(photoIDs, f.PhotoID)
-		}
-
 		type PhotoWithFavResp struct {
 			models.Photo
 			IsFavorited bool `json:"is_favorited"`
 		}
 
-		photoResp := make([]PhotoWithFavResp, 0)
-		if len(photoIDs) > 0 {
-			var photos []models.Photo
-			database.DB.Where("id IN ?", photoIDs).Preload("ExifData").Find(&photos)
-			photoMap := map[uint]models.Photo{}
-			for _, p := range photos {
-				photoMap[p.ID] = p
-			}
-			for _, f := range favs {
-				if p, ok := photoMap[f.PhotoID]; ok {
-					photoResp = append(photoResp, PhotoWithFavResp{Photo: p, IsFavorited: true})
-				}
-			}
+		var photos []models.Photo
+		database.DB.Table("photos").
+			Select("photos.*").
+			Joins("JOIN favorites ON favorites.photo_id = photos.id").
+			Where("favorites.user_id = ?", uid).
+			Preload("ExifData").
+			Order("favorites.created_at desc").
+			Limit(limit).Offset(offset).
+			Find(&photos)
+
+		photoResp := make([]PhotoWithFavResp, 0, len(photos))
+		for _, p := range photos {
+			photoResp = append(photoResp, PhotoWithFavResp{Photo: p, IsFavorited: true})
 		}
 
 		totalPages := int((total + int64(limit) - 1) / int64(limit))
@@ -1573,14 +1571,27 @@ func main() {
 	// API to get AI Config
 	app.Get("/api/config/ai", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var config models.AIConfig
-		result := database.DB.First(&config)
-		if result.Error != nil {
-			if result.Error == gorm.ErrRecordNotFound {
-				return c.JSON(fiber.Map{}) // Return empty object if not found
-			}
+		err := redisCache.Once(&cache.Item{
+			Key:   "ai_config",
+			Value: &config,
+			TTL:   1 * time.Hour,
+			Do: func(*cache.Item) (interface{}, error) {
+				result := database.DB.First(&config)
+				if result.Error != nil {
+					if result.Error == gorm.ErrRecordNotFound {
+						return models.AIConfig{}, nil
+					}
+					return nil, result.Error
+				}
+				return config, nil
+			},
+		})
+		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch AI config"})
 		}
-		// Hide API Key for security
+		if config.ID == 0 {
+			return c.JSON(fiber.Map{})
+		}
 		config.APIKey = "********"
 		return c.JSON(config)
 	})
@@ -1597,8 +1608,8 @@ func main() {
 
 		if result.Error != nil {
 			if result.Error == gorm.ErrRecordNotFound {
-				// Create new config
 				database.DB.Create(&input)
+				redisCache.Delete(c.Context(), "ai_config")
 				return c.JSON(fiber.Map{"message": "AI config created successfully"})
 			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch AI config"})
@@ -1613,6 +1624,7 @@ func main() {
 			config.APIKey = input.APIKey
 		}
 		database.DB.Save(&config)
+		redisCache.Delete(c.Context(), "ai_config")
 
 		return c.JSON(fiber.Map{"message": "AI config updated successfully"})
 	})
@@ -3167,7 +3179,18 @@ func main() {
 	// GET /api/admin/flags — list all feature flags (SuperAdmin)
 	app.Get("/api/admin/flags", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var flags []models.FeatureFlag
-		database.DB.Order("feature_name asc").Find(&flags)
+		err := redisCache.Once(&cache.Item{
+			Key:   "feature_flags",
+			Value: &flags,
+			TTL:   5 * time.Minute,
+			Do: func(*cache.Item) (interface{}, error) {
+				database.DB.Order("feature_name asc").Find(&flags)
+				return flags, nil
+			},
+		})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch flags"})
+		}
 		return c.JSON(flags)
 	})
 
@@ -3186,6 +3209,7 @@ func main() {
 		}
 		flag.IsEnabled = input.IsEnabled
 		database.DB.Save(&flag)
+		redisCache.Delete(c.Context(), "feature_flags")
 		return c.JSON(flag)
 	})
 

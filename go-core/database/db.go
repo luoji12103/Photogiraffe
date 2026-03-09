@@ -37,6 +37,12 @@ func Connect() {
 		log.Fatal("Failed to auto migrate database: ", err)
 	}
 
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_photos_user_id ON photos(user_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_exif_data_photo_id ON exif_data(photo_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_favorites_user_photo ON favorites(user_id, photo_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_ai_rate_limit_target_user_id ON ai_rate_limit(target_user_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read)")
+
 	// Back-fill public_id for existing users that predate the UUID migration.
 	db.Exec(`UPDATE users SET public_id = gen_random_uuid()::text WHERE public_id IS NULL OR public_id = ''`)
 	fmt.Println("public_id migration: back-fill complete (no-op if already populated)")
