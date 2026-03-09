@@ -19,6 +19,7 @@ export interface AuthUser {
 interface AuthState {
   user: AuthUser | null;
   accessToken: string | null;
+  csrfToken: string | null;
   isLoading: boolean;
 }
 
@@ -26,81 +27,101 @@ interface AuthContextValue extends AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, inviteCode?: string) => Promise<void>;
   logout: () => Promise<void>;
-  /** Fetch wrapper that automatically injects the Bearer token and
-   *  retries once after a transparent token refresh on 401. */
   authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** A single pending refresh promise — prevents multiple concurrent refreshes. */
 let refreshPromise: Promise<string | null> | null = null;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
     accessToken: null,
+    csrfToken: null,
     isLoading: true,
   });
-  // Keep a ref that is always in sync with the latest token for the fetch helper
   const tokenRef = useRef<string | null>(null);
+  const csrfTokenRef = useRef<string | null>(null);
   tokenRef.current = state.accessToken;
+  csrfTokenRef.current = state.csrfToken;
 
-  // ── Restore session on mount via refresh token cookie ────────────────────
+  const fetchCsrfToken = useCallback(async (accessToken: string): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/auth/csrf-token", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return typeof data.csrf_token === "string" ? data.csrf_token : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch("/api/auth/refresh", { method: "POST" });
         if (res.ok) {
           const { access_token } = await res.json();
-          // Fetch user profile with the new token
           const meRes = await fetch("/api/auth/me", {
             headers: { Authorization: `Bearer ${access_token}` },
           });
           const user = meRes.ok ? await meRes.json() : null;
-          setState({ user, accessToken: access_token, isLoading: false });
+          const csrfToken = user?.csrf_token || await fetchCsrfToken(access_token);
+          setState({ user, accessToken: access_token, csrfToken, isLoading: false });
         } else {
-          setState({ user: null, accessToken: null, isLoading: false });
+          setState({ user: null, accessToken: null, csrfToken: null, isLoading: false });
         }
       } catch {
-        setState({ user: null, accessToken: null, isLoading: false });
+        setState({ user: null, accessToken: null, csrfToken: null, isLoading: false });
       }
     })();
-  }, []);
+  }, [fetchCsrfToken]);
 
-  // ── Transparent token refresh helper ─────────────────────────────────────
   const silentRefresh = useCallback(async (): Promise<string | null> => {
-    if (refreshPromise) return refreshPromise; // reuse in-flight promise
+    if (refreshPromise) return refreshPromise;
     refreshPromise = (async () => {
       try {
         const res = await fetch("/api/auth/refresh", { method: "POST" });
         if (res.ok) {
-          const { access_token } = await res.json();
+          const { access_token, csrf_token } = await res.json();
           const meRes = await fetch("/api/auth/me", {
             headers: { Authorization: `Bearer ${access_token}` },
           });
           const user = meRes.ok ? await meRes.json() : null;
-          setState({ user, accessToken: access_token, isLoading: false });
+          const nextCsrf = csrf_token || user?.csrf_token || await fetchCsrfToken(access_token);
+          setState({ user, accessToken: access_token, csrfToken: nextCsrf, isLoading: false });
           return access_token as string;
         }
-      } catch { /* fall through */ }
-      setState({ user: null, accessToken: null, isLoading: false });
+      } catch {
+      }
+      setState({ user: null, accessToken: null, csrfToken: null, isLoading: false });
       return null;
-    })().finally(() => { refreshPromise = null; });
+    })().finally(() => {
+      refreshPromise = null;
+    });
     return refreshPromise;
-  }, []);
+  }, [fetchCsrfToken]);
 
-  // ── authFetch — auto-inject Bearer + retry once on 401 ───────────────────
   const authFetch = useCallback(
     async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
       const headers = new Headers(init.headers ?? {});
       if (tokenRef.current) headers.set("Authorization", `Bearer ${tokenRef.current}`);
+      const method = (init.method ?? "GET").toUpperCase();
+      if ((method === "POST" || method === "PUT" || method === "DELETE") && csrfTokenRef.current) {
+        headers.set("X-Csrf-Token", csrfTokenRef.current);
+      }
 
       let res = await fetch(input, { ...init, headers });
       if (res.status === 401) {
         const newToken = await silentRefresh();
         if (newToken) {
           headers.set("Authorization", `Bearer ${newToken}`);
+          if (csrfTokenRef.current && (method === "POST" || method === "PUT" || method === "DELETE")) {
+            headers.set("X-Csrf-Token", csrfTokenRef.current);
+          }
           res = await fetch(input, { ...init, headers });
         }
       }
@@ -109,7 +130,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [silentRefresh]
   );
 
-  // ── login ──────────────────────────────────────────────────────────────────
   const login = useCallback(async (username: string, password: string) => {
     const res = await fetch("/api/auth/login", {
       method: "POST",
@@ -118,10 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Login failed");
-    setState({ user: data.user, accessToken: data.access_token, isLoading: false });
-  }, []);
+    const csrfToken = data.csrf_token || await fetchCsrfToken(data.access_token);
+    setState({ user: data.user, accessToken: data.access_token, csrfToken, isLoading: false });
+  }, [fetchCsrfToken]);
 
-  // ── register ───────────────────────────────────────────────────────────────
   const register = useCallback(
     async (username: string, email: string, password: string, inviteCode?: string) => {
       const body: Record<string, string> = { username, email, password };
@@ -133,17 +153,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Registration failed");
-      setState({ user: data.user, accessToken: data.access_token, isLoading: false });
+      const csrfToken = data.csrf_token || await fetchCsrfToken(data.access_token);
+      setState({ user: data.user, accessToken: data.access_token, csrfToken, isLoading: false });
     },
-    []
+    [fetchCsrfToken]
   );
 
-  // ── logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     try {
       await authFetch("/api/auth/logout", { method: "POST" });
-    } catch { /* ignore errors during logout */ }
-    setState({ user: null, accessToken: null, isLoading: false });
+    } catch {
+    }
+    setState({ user: null, accessToken: null, csrfToken: null, isLoading: false });
   }, [authFetch]);
 
   return (

@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  enable:
+    - gosec      # Security analyzer
+    - govet      # Go vet
+    - errcheck   # Check error handling
+    - staticcheck # Static analysis
+    - gocritic
+  
+linters-settings:
+  gosec:
+    # Enable SQL injection detection rules
+    includes:
+      - G201  # SQL string formatting
+      - G202  # SQL string concatenation
+    # Exclude false positives for GORM usage
+    excludes: []
+  gocritic:
+    enabled-checks:
+      - sqlQuery
+    
+issues:
+  exclude-rules:
+    # Allow GORM's safe usage patterns
+    - path: ".*\\.go"
+      text: "G201.*GORM"
+      linters:
+        - gosec

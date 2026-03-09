@@ -1,0 +1,5 @@
+Task 5 RS256 evidence
+
+JWT header segment (base64url): eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9
+Decoded JWT header:
+{"alg":"RS256","typ":"JWT"}

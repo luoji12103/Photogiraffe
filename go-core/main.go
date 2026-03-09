@@ -28,6 +28,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/csrf"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -323,6 +324,13 @@ func main() {
 	if len(jwtSecret) < 32 {
 		log.Fatal("JWT_SECRET must be at least 32 characters.")
 	}
+	jwtKeyID := os.Getenv("JWT_KEY_ID")
+	if jwtKeyID == "" {
+		jwtKeyID = time.Now().UTC().Format("2006-01-02")
+	}
+	if err := auth.InitKeys(); err != nil {
+		log.Fatalf("failed to initialize JWT RSA keys: %v", err)
+	}
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 	if internalSecret == "" {
 		log.Fatal("INTERNAL_SECRET environment variable is not set. Refusing to start without worker authentication.")
@@ -373,11 +381,28 @@ func main() {
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
 
-	// Enable CORS — restricted to configured frontend origin
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: corsAllowOrigin,
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Internal-Secret",
-		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+		AllowOrigins:     corsAllowOrigin,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Internal-Secret, X-Csrf-Token",
+		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
+		AllowCredentials: true,
+	}))
+
+	app.Use(csrf.New(csrf.Config{
+		KeyLookup:      "header:X-Csrf-Token",
+		CookieName:     "__Host-csrf_",
+		CookieSecure:   true,
+		CookieHTTPOnly: false,
+		CookieSameSite: "Lax",
+		ContextKey:     "csrf",
+		Expiration:     30 * time.Minute,
+		Next: func(c *fiber.Ctx) bool {
+			path := c.Path()
+			if c.Get("X-Internal-Secret") != "" || strings.HasPrefix(path, "/internal/") {
+				return true
+			}
+			return path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" || path == "/api/auth/forgot-password" || path == "/api/auth/reset-password"
+		},
 	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -490,8 +515,10 @@ func main() {
 			Path:     "/",
 		})
 
+		csrfToken, _ := c.Locals("csrf").(string)
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"access_token": accessToken,
+			"csrf_token":   csrfToken,
 			"user": fiber.Map{
 				"id":       user.PublicID, // UUID — never expose sequential integer PK
 				"username": user.Username,
@@ -547,8 +574,10 @@ func main() {
 			Path:     "/",
 		})
 
+		csrfToken, _ := c.Locals("csrf").(string)
 		return c.JSON(fiber.Map{
 			"access_token": accessToken,
+			"csrf_token":   csrfToken,
 			"user": fiber.Map{
 				"id":       user.PublicID, // UUID — never expose sequential integer PK
 				"username": user.Username,
@@ -601,7 +630,8 @@ func main() {
 			Path:     "/",
 		})
 
-		return c.JSON(fiber.Map{"access_token": accessToken})
+		csrfToken, _ := c.Locals("csrf").(string)
+		return c.JSON(fiber.Map{"access_token": accessToken, "csrf_token": csrfToken})
 	})
 
 	// POST /api/auth/logout — revoke current refresh token
@@ -616,18 +646,37 @@ func main() {
 	})
 
 	// GET /api/auth/me — return current user profile
+	app.Get("/api/auth/jwks.json", func(c *fiber.Ctx) error {
+		jwks, err := auth.GetJWKS(jwtKeyID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load JWKS"})
+		}
+		return c.JSON(jwks)
+	})
+
+	// GET /api/auth/me — return current user profile
 	app.Get("/api/auth/me", requireJWT(), func(c *fiber.Ctx) error {
 		uid := userIDFromLocals(c)
 		var user models.User
 		if result := database.DB.First(&user, uid); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
 		}
+		csrfToken, _ := c.Locals("csrf").(string)
 		return c.JSON(fiber.Map{
-			"id":       user.PublicID, // UUID — never expose sequential integer PK
-			"username": user.Username,
-			"email":    user.Email,
-			"role":     user.Role,
+			"id":         user.PublicID, // UUID — never expose sequential integer PK
+			"username":   user.Username,
+			"email":      user.Email,
+			"role":       user.Role,
+			"csrf_token": csrfToken,
 		})
+	})
+
+	app.Get("/api/auth/csrf-token", requireJWT(), func(c *fiber.Ctx) error {
+		token, _ := c.Locals("csrf").(string)
+		if token == "" {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate CSRF token"})
+		}
+		return c.JSON(fiber.Map{"csrf_token": token})
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────

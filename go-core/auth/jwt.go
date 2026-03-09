@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -26,6 +27,25 @@ func jwtSecret() []byte {
 	return []byte(s)
 }
 
+func hs256GraceActive() bool {
+	graceUntil := os.Getenv("JWT_HS256_GRACE_UNTIL")
+	if graceUntil == "" {
+		if deployedAt := os.Getenv("JWT_RS256_DEPLOYED_AT"); deployedAt != "" {
+			t, err := time.Parse(time.RFC3339, deployedAt)
+			if err != nil {
+				return false
+			}
+			return time.Now().Before(t.Add(7 * 24 * time.Hour))
+		}
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, graceUntil)
+	if err != nil {
+		return false
+	}
+	return time.Now().Before(t)
+}
+
 // GenerateAccessToken issues a short-lived access token (15 min).
 // publicID must be the user's UUID v4 (User.PublicID), not the sequential integer PK.
 func GenerateAccessToken(publicID, username, role string) (string, time.Time, error) {
@@ -41,18 +61,35 @@ func GenerateAccessToken(publicID, username, role string) (string, time.Time, er
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(jwtSecret())
+
+	pk, err := GetPrivateKey()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(pk)
 	return signed, exp, err
 }
 
 // ValidateAccessToken parses and verifies a JWT string.
 func ValidateAccessToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
+		switch t.Method.Alg() {
+		case jwt.SigningMethodRS256.Alg():
+			pub, keyErr := GetPublicKey()
+			if keyErr != nil {
+				return nil, keyErr
+			}
+			return pub, nil
+		case jwt.SigningMethodHS256.Alg():
+			if !hs256GraceActive() {
+				return nil, errors.New("hs256 grace period has ended")
+			}
+			return jwtSecret(), nil
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %s", t.Method.Alg())
 		}
-		return jwtSecret(), nil
 	})
 	if err != nil {
 		return nil, err

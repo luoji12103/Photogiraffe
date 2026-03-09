@@ -19,3 +19,6 @@ frontend/out/
 
 # Docker
 *.log
+
+# Local JWT RSA keys (never commit)
+go-core/keys/*.pem
