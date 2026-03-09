@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"photogiraffe/core/models"
 
@@ -29,6 +30,12 @@ func Connect() {
 	}
 
 	DB = db
+
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+
 	fmt.Println("Successfully connected to PostgreSQL database!")
 
 	// Auto Migrate
