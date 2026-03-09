@@ -1120,7 +1120,8 @@ func main() {
 		if err := database.DB.First(&photo, photoIDStr).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
 		}
-		if photo.UserID != uid && !photo.IsPublic && role != "SuperAdmin" {
+		if photo.UserID == uid || photo.IsPublic || role == "SuperAdmin" {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		var count int64
@@ -1278,7 +1279,8 @@ func main() {
 			Where("photos.status = 'completed'").
 			Limit(limit)
 
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			query = query.Where("photos.user_id = ?", uid)
 		}
 		if startDate != "" {
@@ -1342,7 +1344,8 @@ func main() {
 
 		// Build base query with ownership check
 		base := database.DB.Model(&models.Photo{})
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			base = base.Where("user_id = ?", uid)
 		}
 		if search != "" {
@@ -1426,7 +1429,8 @@ func main() {
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		// Check if this viewer has favorited this photo
@@ -1494,7 +1498,8 @@ func main() {
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		// B4 fix: only allow AI analysis on successfully processed photos;
@@ -1580,7 +1585,8 @@ func main() {
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		if photo.Status != "completed" {
@@ -1655,7 +1661,8 @@ func main() {
 		if result := database.DB.First(&photo, id); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		if photo.Status != "completed" {
@@ -1856,7 +1863,8 @@ func main() {
 		role := c.Locals("userRole").(string)
 		var presets []models.Preset
 		query := database.DB.Order("created_at desc")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			query = query.Where("user_id = ?", uid)
 		}
 		query.Find(&presets)
@@ -1872,7 +1880,8 @@ func main() {
 		if result := database.DB.First(&preset, id); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Preset not found"})
 		}
-		if role != "SuperAdmin" && preset.UserID != uid {
+		if role == "SuperAdmin" || preset.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		database.DB.Delete(&preset)
@@ -1888,7 +1897,8 @@ func main() {
 		if result := database.DB.First(&preset, id); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Preset not found"})
 		}
-		if role != "SuperAdmin" && preset.UserID != uid {
+		if role == "SuperAdmin" || preset.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		var body struct {
@@ -1927,7 +1937,8 @@ func main() {
 		}
 		var photo models.Photo
 		q := database.DB.Where("id = ?", photoID)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		if result := q.First(&photo); result.Error != nil {
@@ -1999,7 +2010,8 @@ func main() {
 		if result := database.DB.First(&preset, id); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "preset not found"})
 		}
-		if role != "SuperAdmin" && preset.UserID != uid {
+		if role == "SuperAdmin" || preset.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		if preset.FilePath == "" {
@@ -2101,7 +2113,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		var jobs []models.ExportJob
@@ -2200,7 +2213,8 @@ func main() {
 		if result := database.DB.First(&job, jobID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
 		}
-		if role != "SuperAdmin" && job.UserID != uid {
+		if role == "SuperAdmin" || job.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		return c.JSON(job)
@@ -2215,7 +2229,8 @@ func main() {
 		if result := database.DB.First(&job, jobID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
 		}
-		if role != "SuperAdmin" && job.UserID != uid {
+		if role == "SuperAdmin" || job.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		if job.Status != "completed" || job.OutputPath == "" {
@@ -2305,7 +2320,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		var body struct {
@@ -2330,7 +2346,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		var body struct {
@@ -2369,7 +2386,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "maximum 200 photos per bulk delete"})
 		}
 		q := database.DB.Where("id IN ?", body.IDs)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		result := q.Delete(&models.Photo{})
@@ -2399,7 +2417,8 @@ func main() {
 		case "set_public", "set_private":
 			isPublic := body.Action == "set_public"
 			q := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
-			if role != "SuperAdmin" {
+			if role == "SuperAdmin" {
+			} else {
 				q = q.Where("user_id = ?", uid)
 			}
 			res := q.Update("is_public", isPublic)
@@ -2410,7 +2429,8 @@ func main() {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tag required for add_tag/remove_tag"})
 			}
 			q := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
-			if role != "SuperAdmin" {
+			if role == "SuperAdmin" {
+			} else {
 				q = q.Where("user_id = ?", uid)
 			}
 			var photos []models.Photo
@@ -2468,7 +2488,8 @@ func main() {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rating must be 0-5"})
 			}
 			qr := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
-			if role != "SuperAdmin" {
+			if role == "SuperAdmin" {
+			} else {
 				qr = qr.Where("user_id = ?", uid)
 			}
 			resr := qr.Update("rating", body.Rating)
@@ -2476,7 +2497,8 @@ func main() {
 
 		case "set_color_label":
 			qcl := database.DB.Model(&models.Photo{}).Where("id IN ?", body.IDs)
-			if role != "SuperAdmin" {
+			if role == "SuperAdmin" {
+			} else {
 				qcl = qcl.Where("user_id = ?", uid)
 			}
 			rescl := qcl.Update("color_label", body.ColorLabel)
@@ -2502,7 +2524,8 @@ func main() {
 		if result := database.DB.First(&album, body.AlbumID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Album not found"})
 		}
-		if role != "SuperAdmin" && album.UserID != uid {
+		if role == "SuperAdmin" || album.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 		var added int64
@@ -2559,7 +2582,8 @@ func main() {
 		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
 		}
-		if role != "SuperAdmin" && album.UserID != uid {
+		if role == "SuperAdmin" || album.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		return c.JSON(album)
@@ -2573,7 +2597,8 @@ func main() {
 		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
 		}
-		if role != "SuperAdmin" && album.UserID != uid {
+		if role == "SuperAdmin" || album.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		var body struct {
@@ -2609,7 +2634,8 @@ func main() {
 		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
 		}
-		if role != "SuperAdmin" && album.UserID != uid {
+		if role == "SuperAdmin" || album.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		database.DB.Delete(&album)
@@ -2624,7 +2650,8 @@ func main() {
 		if err := database.DB.First(&album, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "smart album not found"})
 		}
-		if role != "SuperAdmin" && album.UserID != uid {
+		if role == "SuperAdmin" || album.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 
@@ -2928,7 +2955,8 @@ func main() {
 		if err := database.DB.First(&job, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
 		}
-		if role != "SuperAdmin" && job.UserID != uid {
+		if role == "SuperAdmin" || job.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 		result := map[string]interface{}{
@@ -3079,7 +3107,8 @@ func main() {
 
 		var photo models.Photo
 		q := database.DB.Preload("ExifData").Where("id = ?", id)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		if result := q.First(&photo); result.Error != nil {
@@ -3186,7 +3215,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 
@@ -3251,7 +3281,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 
@@ -3274,7 +3305,8 @@ func main() {
 		if result := database.DB.First(&photo, photoID); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Access denied"})
 		}
 
@@ -3526,7 +3558,8 @@ func main() {
 		// Fetch only photos the caller owns (SuperAdmin can delete any)
 		var photos []models.Photo
 		q := database.DB.Where("id IN ?", body.IDs)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		if err := q.Find(&photos).Error; err != nil {
@@ -3575,7 +3608,8 @@ func main() {
 		// Fetch completed photos owned by the caller
 		var photos []models.Photo
 		q := database.DB.Where("id IN ? AND status = 'completed'", body.IDs)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		if err := q.Find(&photos).Error; err != nil {
@@ -4167,7 +4201,8 @@ func main() {
 
 		query := database.DB.Model(&models.Photo{}).
 			Joins("LEFT JOIN exif_data ON exif_data.photo_id = photos.id AND exif_data.deleted_at IS NULL")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			query = query.Where("photos.user_id = ?", uid)
 		}
 		query = query.Where("photos.status = ?", "completed")
@@ -4715,7 +4750,8 @@ func main() {
 		if result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Photo not found"})
 		}
-		if role != "SuperAdmin" && photo.UserID != uid {
+		if role == "SuperAdmin" || photo.UserID == uid {
+		} else {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden"})
 		}
 
@@ -4867,7 +4903,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rating must be 0-5"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		res := q.Update("rating", body.Rating)
@@ -4892,7 +4929,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		res := q.Update("color_label", body.ColorLabel)
@@ -4917,7 +4955,8 @@ func main() {
 		}
 		var photos []models.Photo
 		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL AND status = 'completed'")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		q.Select("tags").Find(&photos)
@@ -4953,7 +4992,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "old_name and new_name required"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		var photos []models.Photo
@@ -4996,7 +5036,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "source and target required"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		var photos []models.Photo
@@ -5045,7 +5086,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tag name required"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("tags IS NOT NULL")
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		var photos []models.Photo
@@ -5211,7 +5253,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("id = ?", pid)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		updates := map[string]interface{}{}
@@ -5255,7 +5298,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ids and offset_seconds required"})
 		}
 		q := database.DB.Model(&models.Photo{}).Where("id IN ? AND taken_at IS NOT NULL", body.IDs)
-		if role != "SuperAdmin" {
+		if role == "SuperAdmin" {
+		} else {
 			q = q.Where("user_id = ?", uid)
 		}
 		res := q.UpdateColumn("taken_at", gorm.Expr("taken_at + make_interval(secs => ?)", body.OffsetSeconds))
