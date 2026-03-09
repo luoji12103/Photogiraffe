@@ -1285,7 +1285,7 @@ func main() {
 			query = query.Where("exif_data.date_time_original >= ?", startDate)
 		}
 		if endDate != "" {
-			query = query.Where("exif_data.date_time_original <= ?", endDate+" 23:59:59")
+			query = query.Where("exif_data.date_time_original <= (? || ' 23:59:59')", endDate)
 		}
 
 		var rows []row
@@ -1346,14 +1346,15 @@ func main() {
 			base = base.Where("user_id = ?", uid)
 		}
 		if search != "" {
-			base = base.Where("original_filename ILIKE ?", "%"+search+"%")
+			base = base.Where("original_filename ILIKE '%' || ? || '%'", search)
 		}
 		if statusFilter != "" {
 			base = base.Where("status = ?", statusFilter)
 		}
 		if colorBucket != "" {
 			// Match photos where dominant_colors jsonb contains an entry with this bucket
-			base = base.Where("dominant_colors::text ILIKE ?", "%\""+colorBucket+"\"%")
+			quotedColorBucket := fmt.Sprintf("\"%s\"", colorBucket)
+			base = base.Where("dominant_colors::text ILIKE '%' || ? || '%'", quotedColorBucket)
 		}
 
 		// Get total count
@@ -2650,13 +2651,13 @@ func main() {
 				q = q.Where("uploaded_at >= ?", from)
 			}
 			if to, ok := params["to"].(string); ok && to != "" {
-				q = q.Where("uploaded_at <= ?", to+" 23:59:59")
+				q = q.Where("uploaded_at <= (? || ' 23:59:59')", to)
 			}
 		case "tags_contain":
 			if tags, ok := params["tags"].([]interface{}); ok {
 				for _, t := range tags {
 					if tagStr, ok := t.(string); ok && tagStr != "" {
-						q = q.Where("tags::text ILIKE ?", "%"+tagStr+"%")
+						q = q.Where("tags::text ILIKE '%' || ? || '%'", tagStr)
 					}
 				}
 			}
@@ -2664,18 +2665,18 @@ func main() {
 			if tags, ok := params["tags"].([]interface{}); ok {
 				for _, t := range tags {
 					if tagStr, ok := t.(string); ok && tagStr != "" {
-						q = q.Where("auto_tags::text ILIKE ?", "%"+tagStr+"%")
+						q = q.Where("auto_tags::text ILIKE '%' || ? || '%'", tagStr)
 					}
 				}
 			}
 		case "camera_model":
 			if model, ok := params["model"].(string); ok && model != "" {
 				q = q.Joins("JOIN exif_data ON exif_data.photo_id = photos.id").
-					Where("exif_data.camera_model ILIKE ?", "%"+model+"%")
+					Where("exif_data.camera_model ILIKE '%' || ? || '%'", model)
 			}
 		case "color_bucket":
 			if bucket, ok := params["bucket"].(string); ok && bucket != "" {
-				q = q.Where("dominant_colors::text ILIKE ?", "%"+bucket+"%")
+				q = q.Where("dominant_colors::text ILIKE '%' || ? || '%'", bucket)
 			}
 		}
 
@@ -4172,17 +4173,16 @@ func main() {
 		query = query.Where("photos.status = ?", "completed")
 
 		if q != "" {
-			like := "%" + q + "%"
-			query = query.Where("photos.original_filename ILIKE ? OR exif_data.camera_model ILIKE ? OR exif_data.lens_model ILIKE ?", like, like, like)
+			query = query.Where("photos.original_filename ILIKE '%' || ? || '%' OR exif_data.camera_model ILIKE '%' || ? || '%' OR exif_data.lens_model ILIKE '%' || ? || '%'", q, q, q)
 		}
 		if camera != "" {
-			query = query.Where("exif_data.camera_model ILIKE ?", "%"+camera+"%")
+			query = query.Where("exif_data.camera_model ILIKE '%' || ? || '%'", camera)
 		}
 		if lens != "" {
-			query = query.Where("exif_data.lens_model ILIKE ?", "%"+lens+"%")
+			query = query.Where("exif_data.lens_model ILIKE '%' || ? || '%'", lens)
 		}
 		if colorSpace != "" {
-			query = query.Where("exif_data.color_space ILIKE ?", "%"+colorSpace+"%")
+			query = query.Where("exif_data.color_space ILIKE '%' || ? || '%'", colorSpace)
 		}
 		// Focal length range
 		if focalMin != "" {
@@ -4212,7 +4212,7 @@ func main() {
 			query = query.Where("photos.uploaded_at >= ?", dateFrom)
 		}
 		if dateTo != "" {
-			query = query.Where("photos.uploaded_at <= ?", dateTo+" 23:59:59")
+			query = query.Where("photos.uploaded_at <= (? || ' 23:59:59')", dateTo)
 		}
 		// GPS bounding box approximation
 		if latStr != "" && lngStr != "" && radiusKmStr != "" {
@@ -4254,32 +4254,44 @@ func main() {
 		uid := userIDFromLocals(c)
 		role := c.Locals("userRole").(string)
 
-		uidCond := "user_id = ?"
-		uidArgs := []interface{}{uid}
-		if role == "SuperAdmin" {
-			uidCond = "1=1"
-			uidArgs = nil
+		isSuperAdmin := role == "SuperAdmin"
+
+		photosQuery := database.DB.Model(&models.Photo{})
+		albumsQuery := database.DB.Model(&models.Album{})
+		presetsQuery := database.DB.Model(&models.Preset{})
+		if !isSuperAdmin {
+			photosQuery = photosQuery.Where("user_id = ?", uid)
+			albumsQuery = albumsQuery.Where("user_id = ?", uid)
+			presetsQuery = presetsQuery.Where("user_id = ?", uid)
 		}
 
 		// Total photos (all statuses)
 		var totalPhotos int64
-		database.DB.Model(&models.Photo{}).Where(uidCond, uidArgs...).Count(&totalPhotos)
+		photosQuery.Count(&totalPhotos)
 
 		// Completed photos
 		var completedPhotos int64
-		database.DB.Model(&models.Photo{}).Where(uidCond+" AND status = 'completed'", uidArgs...).Count(&completedPhotos)
+		completedQuery := database.DB.Model(&models.Photo{}).Where("status = ?", "completed")
+		if !isSuperAdmin {
+			completedQuery = completedQuery.Where("user_id = ?", uid)
+		}
+		completedQuery.Count(&completedPhotos)
 
 		// AI analysed (AIAnalysis is not null)
 		var aiAnalyzed int64
-		database.DB.Model(&models.Photo{}).Where(uidCond+" AND ai_analysis IS NOT NULL", uidArgs...).Count(&aiAnalyzed)
+		aiAnalyzedQuery := database.DB.Model(&models.Photo{}).Where("ai_analysis IS NOT NULL")
+		if !isSuperAdmin {
+			aiAnalyzedQuery = aiAnalyzedQuery.Where("user_id = ?", uid)
+		}
+		aiAnalyzedQuery.Count(&aiAnalyzed)
 
 		// Albums
 		var totalAlbums int64
-		database.DB.Model(&models.Album{}).Where(uidCond, uidArgs...).Count(&totalAlbums)
+		albumsQuery.Count(&totalAlbums)
 
 		// Presets
 		var totalPresets int64
-		database.DB.Model(&models.Preset{}).Where(uidCond, uidArgs...).Count(&totalPresets)
+		presetsQuery.Count(&totalPresets)
 
 		// Recent uploads by day (last 14 days)
 		type DayCount struct {
@@ -4287,15 +4299,13 @@ func main() {
 			Count int64  `json:"count"`
 		}
 		var recentUploads []DayCount
-		recentSQL := `SELECT TO_CHAR(uploaded_at, 'YYYY-MM-DD') as date, COUNT(*) as count
-			FROM photos WHERE deleted_at IS NULL AND ` + uidCond + `
-			AND uploaded_at >= NOW() - INTERVAL '14 days'
-			GROUP BY date ORDER BY date`
-		if uidArgs == nil {
-			database.DB.Raw(recentSQL).Scan(&recentUploads)
-		} else {
-			database.DB.Raw(recentSQL, uidArgs...).Scan(&recentUploads)
+		recentQuery := database.DB.Model(&models.Photo{}).
+			Select("TO_CHAR(uploaded_at, 'YYYY-MM-DD') as date, COUNT(*) as count").
+			Where("uploaded_at >= NOW() - INTERVAL '14 days'")
+		if !isSuperAdmin {
+			recentQuery = recentQuery.Where("user_id = ?", uid)
 		}
+		recentQuery.Group("date").Order("date").Scan(&recentUploads)
 
 		// Top cameras (from exif_data)
 		type NameCount struct {
@@ -4303,42 +4313,36 @@ func main() {
 			Count int64  `json:"count"`
 		}
 		var topCameras []NameCount
-		camSQL := `SELECT exif_data.camera_model as name, COUNT(*) as count
-			FROM exif_data
-			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
-			WHERE exif_data.deleted_at IS NULL AND exif_data.camera_model != '' AND ` + uidCond + `
-			GROUP BY exif_data.camera_model ORDER BY count DESC LIMIT 8`
-		if uidArgs == nil {
-			database.DB.Raw(camSQL).Scan(&topCameras)
-		} else {
-			database.DB.Raw(camSQL, uidArgs...).Scan(&topCameras)
+		topCameraQuery := database.DB.Model(&models.ExifData{}).
+			Select("exif_data.camera_model as name, COUNT(*) as count").
+			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").
+			Where("exif_data.camera_model != ?", "")
+		if !isSuperAdmin {
+			topCameraQuery = topCameraQuery.Where("photos.user_id = ?", uid)
 		}
+		topCameraQuery.Group("exif_data.camera_model").Order("count DESC").Limit(8).Scan(&topCameras)
 
 		// Top lenses
 		var topLenses []NameCount
-		lensSQL := `SELECT exif_data.lens_model as name, COUNT(*) as count
-			FROM exif_data
-			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
-			WHERE exif_data.deleted_at IS NULL AND exif_data.lens_model != '' AND ` + uidCond + `
-			GROUP BY exif_data.lens_model ORDER BY count DESC LIMIT 8`
-		if uidArgs == nil {
-			database.DB.Raw(lensSQL).Scan(&topLenses)
-		} else {
-			database.DB.Raw(lensSQL, uidArgs...).Scan(&topLenses)
+		topLensQuery := database.DB.Model(&models.ExifData{}).
+			Select("exif_data.lens_model as name, COUNT(*) as count").
+			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").
+			Where("exif_data.lens_model != ?", "")
+		if !isSuperAdmin {
+			topLensQuery = topLensQuery.Where("photos.user_id = ?", uid)
 		}
+		topLensQuery.Group("exif_data.lens_model").Order("count DESC").Limit(8).Scan(&topLenses)
 
 		// Color space distribution
 		var colorSpaces []NameCount
-		csSQL := `SELECT exif_data.color_space as name, COUNT(*) as count
-			FROM exif_data
-			JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL
-			WHERE exif_data.deleted_at IS NULL AND exif_data.color_space != '' AND ` + uidCond + `
-			GROUP BY exif_data.color_space ORDER BY count DESC`
-		if uidArgs == nil {
-			database.DB.Raw(csSQL).Scan(&colorSpaces)
-		} else {
-			database.DB.Raw(csSQL, uidArgs...).Scan(&colorSpaces)
+		colorSpaceQuery := database.DB.Model(&models.ExifData{}).
+			Select("exif_data.color_space as name, COUNT(*) as count").
+			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").
+			Where("exif_data.color_space != ?", "")
+		if !isSuperAdmin {
+			colorSpaceQuery = colorSpaceQuery.Where("photos.user_id = ?", uid)
 		}
+		colorSpaceQuery.Group("exif_data.color_space").Order("count DESC").Scan(&colorSpaces)
 
 		return c.JSON(fiber.Map{
 			"total_photos":     totalPhotos,
