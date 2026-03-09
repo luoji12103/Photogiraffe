@@ -242,10 +242,14 @@ def process_image(minio_client, photo_id, minio_path):
     try:
         # 1. Download original image
         logger.info(f"Downloading {minio_path} from MinIO...")
-        response = minio_client.get_object(bucket_name, minio_path)
-        img_data = response.read()
-        response.close()
-        response.release_conn()
+        response = None
+        try:
+            response = minio_client.get_object(bucket_name, minio_path)
+            img_data = response.read()
+        finally:
+            if response:
+                response.close()
+                response.release_conn()
 
         # 2. Process image with Pillow or rawpy
         logger.info(f"Processing image {photo_id}...")
@@ -550,10 +554,14 @@ def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, m
 
         # 1. Download proxy image from MinIO
         proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
-        response = minio_client.get_object(bucket_name, proxy_path)
-        image_data = response.read()
-        response.close()
-        response.release_conn()
+        response = None
+        try:
+            response = minio_client.get_object(bucket_name, proxy_path)
+            image_data = response.read()
+        finally:
+            if response:
+                response.close()
+                response.release_conn()
 
         # 2. Encode image to base64 (used by most providers)
         base64_image = base64.b64encode(image_data).decode("utf-8")
@@ -638,10 +646,10 @@ def _apply_adjust_params(img: Image.Image, opts: dict) -> Image.Image:
 def _apply_watermark(img: Image.Image, minio_client, watermark_path: str,
                      opacity: float, position: str) -> Image.Image:
     """Overlay a PNG watermark onto img. Returns original on any error."""
+    resp = None
     try:
         resp = minio_client.get_object("photos", watermark_path)
         wm_data = resp.read()
-        resp.close(); resp.release_conn()
 
         wm = Image.open(BytesIO(wm_data)).convert("RGBA")
 
@@ -676,6 +684,10 @@ def _apply_watermark(img: Image.Image, minio_client, watermark_path: str,
     except Exception as e:
         logger.warning(f"Watermark overlay failed ({e}); skipping watermark")
         return img
+    finally:
+        if resp:
+            resp.close()
+            resp.release_conn()
 
 
 # ─── Phase 14 helpers ────────────────────────────────────────────────────────
@@ -1160,17 +1172,22 @@ def _download_photo_for_export(minio_client, minio_path: str, quality: int, prin
     """Download a completed proxy image, apply print-spec crop, and return JPEG bytes."""
     # Use proxy path (already processed, sRGB)
     proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
+    resp = None
     try:
         resp = minio_client.get_object(bucket, proxy_path)
         img_data = resp.read()
-        resp.close()
-        resp.release_conn()
     except Exception:
         # Fall back to raw if proxy missing
+        if resp:
+            resp.close()
+            resp.release_conn()
+            resp = None
         resp = minio_client.get_object(bucket, minio_path)
         img_data = resp.read()
-        resp.close()
-        resp.release_conn()
+    finally:
+        if resp:
+            resp.close()
+            resp.release_conn()
 
     img = Image.open(BytesIO(img_data)).convert("RGB")
     if print_spec != "none":
@@ -1306,9 +1323,14 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         minio_path = photo_meta["minio_path"]
 
         logger.info(f"[export:{job_id}] Downloading {minio_path}...")
-        response = minio_client.get_object(bucket, minio_path)
-        img_data = response.read()
-        response.close(); response.release_conn()
+        response = None
+        try:
+            response = minio_client.get_object(bucket, minio_path)
+            img_data = response.read()
+        finally:
+            if response:
+                response.close()
+                response.release_conn()
 
         # 2. Decode image
         is_raw = minio_path.lower().endswith(('.arw', '.cr2', '.cr3', '.nef', '.dng',
@@ -1494,10 +1516,14 @@ def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
     prompt = INFER_PARAMS_PROMPT_ZH if prompt_language == "zh" else INFER_PARAMS_PROMPT
     try:
         logger.info(f"[infer:{photo_id}] Starting param inference via {provider}/{model_name}, lang={prompt_language}...")
-        response = minio_client.get_object(bucket_name, minio_path)
-        image_data = response.read()
-        response.close()
-        response.release_conn()
+        response = None
+        try:
+            response = minio_client.get_object(bucket_name, minio_path)
+            image_data = response.read()
+        finally:
+            if response:
+                response.close()
+                response.release_conn()
 
         base64_image = base64.b64encode(image_data).decode("utf-8")
 

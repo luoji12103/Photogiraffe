@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"photogiraffe/core/auth"
@@ -30,6 +31,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/csrf"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
+	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/valyala/fasthttp"
@@ -43,56 +45,91 @@ import (
 
 var (
 	sseMu  sync.RWMutex
-	sseHub = make(map[uint][]chan string)
+	sseHub = make(map[uint][]*sseClient)
 )
 
+type sseClient struct {
+	ch     chan string
+	closed atomic.Bool
+}
+
+func newSSEClient() *sseClient {
+	return &sseClient{ch: make(chan string, 32)}
+}
+
+func (c *sseClient) send(msg string) {
+	if c.closed.Load() {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic sending SSE: %v", r)
+		}
+	}()
+	select {
+	case c.ch <- msg:
+	default: // drop if buffer full (slow client)
+	}
+}
+
+func (c *sseClient) close() {
+	if !c.closed.CompareAndSwap(false, true) {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic closing SSE channel: %v", r)
+		}
+	}()
+	close(c.ch)
+}
+
 func sseSubscribe(userID uint) chan string {
-	ch := make(chan string, 32)
+	client := newSSEClient()
 	sseMu.Lock()
-	sseHub[userID] = append(sseHub[userID], ch)
+	sseHub[userID] = append(sseHub[userID], client)
 	sseMu.Unlock()
-	return ch
+	return client.ch
 }
 
 func sseUnsubscribe(userID uint, ch chan string) {
 	sseMu.Lock()
 	defer sseMu.Unlock()
-	chans := sseHub[userID]
-	for i, c := range chans {
-		if c == ch {
-			sseHub[userID] = append(chans[:i], chans[i+1:]...)
+	clients := sseHub[userID]
+	for i, c := range clients {
+		if c.ch == ch {
+			sseHub[userID] = append(clients[:i], clients[i+1:]...)
+			c.close()
 			break
 		}
 	}
 	if len(sseHub[userID]) == 0 {
 		delete(sseHub, userID)
 	}
-	close(ch)
 }
 
 // broadcastToUser pushes an SSE event to all open tabs for a given internal userID.
 func broadcastToUser(userID uint, eventType, data string) {
 	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, data)
 	sseMu.RLock()
-	chans := append([]chan string(nil), sseHub[userID]...) // copy slice
+	clients := append([]*sseClient(nil), sseHub[userID]...) // copy slice
 	sseMu.RUnlock()
-	for _, ch := range chans {
-		select {
-		case ch <- msg:
-		default: // drop if buffer full (slow client)
-		}
+	for _, client := range clients {
+		client.send(msg)
 	}
 }
 
 // createNotification persists a Notification row for the user (Phase 34).
 func createNotification(userID uint, notifType, title, body string) {
-	database.DB.Create(&models.Notification{
+	if err := database.DB.Create(&models.Notification{
 		UserID: userID,
 		Type:   notifType,
 		Title:  title,
 		Body:   body,
 		IsRead: false,
-	})
+	}).Error; err != nil {
+		log.Printf("[createNotification error] userID=%d type=%s error=%v", userID, notifType, err)
+	}
 }
 
 // requireJWT validates the Authorization: Bearer <jwt> header.
@@ -308,12 +345,15 @@ func recordLoginHistory(userID uint, ip, ua string, success bool) {
 	database.DB.Create(&models.LoginHistory{
 		UserID: userID, IPAddress: ip, UserAgent: ua, Success: success,
 	})
-	// Keep only the most-recent 10 rows per user
-	var oldest []models.LoginHistory
-	database.DB.Where("user_id = ?", userID).Order("created_at DESC").Offset(10).Find(&oldest)
-	for _, old := range oldest {
-		database.DB.Delete(&old)
-	}
+	database.DB.Exec(`
+		DELETE FROM login_history
+		WHERE id IN (
+			SELECT id FROM login_history
+			WHERE user_id = ?
+			ORDER BY created_at DESC
+			OFFSET 10
+		)
+	`, userID)
 }
 
 func main() {
@@ -380,6 +420,13 @@ func main() {
 	app := fiber.New(fiber.Config{
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
+
+	app.Use(fiberrecover.New(fiberrecover.Config{
+		EnableStackTrace: true,
+		StackTraceHandler: func(c *fiber.Ctx, e interface{}) {
+			log.Printf("[PANIC RECOVERY] path=%s method=%s panic=%v", c.Path(), c.Method(), e)
+		},
+	}))
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     corsAllowOrigin,
@@ -540,11 +587,25 @@ func main() {
 
 		var user models.User
 		if result := database.DB.Where("username = ?", input.Username).First(&user); result.Error != nil {
-			go recordLoginHistory(0, c.IP(), c.Get("User-Agent"), false)
+			go func(ip, ua string) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[goroutine panic] recordLoginHistory: %v", r)
+					}
+				}()
+				recordLoginHistory(0, ip, ua, false)
+			}(c.IP(), c.Get("User-Agent"))
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
-			go recordLoginHistory(user.ID, c.IP(), c.Get("User-Agent"), false)
+			go func(uid uint, ip, ua string) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[goroutine panic] recordLoginHistory: %v", r)
+					}
+				}()
+				recordLoginHistory(uid, ip, ua, false)
+			}(user.ID, c.IP(), c.Get("User-Agent"))
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 		}
 
@@ -563,7 +624,14 @@ func main() {
 			TokenHash: hashRefresh,
 			ExpiresAt: refreshExpiry,
 		})
-		go recordLoginHistory(user.ID, c.IP(), c.Get("User-Agent"), true)
+		go func(uid uint, ip, ua string) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[goroutine panic] recordLoginHistory: %v", r)
+				}
+			}()
+			recordLoginHistory(uid, ip, ua, true)
+		}(user.ID, c.IP(), c.Get("User-Agent"))
 
 		c.Cookie(&fiber.Cookie{
 			Name:     "refresh_token",
@@ -795,7 +863,10 @@ func main() {
 		}
 		// Generate raw token (32 bytes hex) + SHA-256 hash for storage
 		rawBytes := make([]byte, 32)
-		rand.Read(rawBytes)
+		if _, err := rand.Read(rawBytes); err != nil {
+			log.Printf("crypto error generating reset token for email=%s: %v", input.Email, err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate reset token"})
+		}
 		rawToken := hex.EncodeToString(rawBytes)
 		h := sha256sum(rawToken)
 		expiry := time.Now().Add(5 * time.Minute)
@@ -812,7 +883,16 @@ func main() {
 				frontendURL = "http://localhost:3000"
 			}
 			link := frontendURL + "/reset-password?token=" + rawToken
-			go sendEmail(smtp, user.Email, "重置您的 Photogiraffe 密码",
+			go func(cfg models.SmtpConfig, email, subject, body string) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[goroutine panic] sendEmail: %v", r)
+					}
+				}()
+				if err := sendEmail(cfg, email, subject, body); err != nil {
+					log.Printf("[sendEmail error] to=%s error=%v", email, err)
+				}
+			}(smtp, user.Email, "重置您的 Photogiraffe 密码",
 				"您的密码重置链接（5分钟内有效）：\n\n"+link+"\n\n如非本人操作请忽略此邮件。")
 		}
 		return c.JSON(fiber.Map{"message": "If that email exists, a reset link has been sent."})
