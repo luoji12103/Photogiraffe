@@ -497,10 +497,10 @@ def test_phase9(token):
     check("PUT /api/photos/:id/description 200", status == 200, f"status={status}")
     check("  description reflected", isinstance(d, dict) and d.get("description") == "Test caption", d)
 
-    # verify photo detail has description (GET /photos/:id returns Go struct with capitalized keys)
+    # verify photo detail has description (GET /photos/:id returns nested structure)
     d, status, _ = http("GET", f"/photos/{photo_id}", token=token)
     check("GET /photos/:id still 200 after desc update", status == 200, f"status={status}")
-    check("  description persisted", isinstance(d, dict) and d.get("Description") == "Test caption", d)
+    check("  description persisted", isinstance(d, dict) and d.get("photo", {}).get("Description") == "Test caption", d)
 
     # ── v9.3: bulk-delete (empty list → 400) ──
     d, status, _ = http("POST", "/api/photos/bulk-delete", token=token,
@@ -609,7 +609,7 @@ def test_phase10(token):
         photo_id = photos[0]["ID"]
         pd, pstatus, _ = http("GET", f"/photos/{photo_id}", token=token)
         check("GET /photos/:id 200 (v10.4 check)", pstatus == 200, f"status={pstatus}")
-        check("  photo has UserID field", isinstance(pd, dict) and "UserID" in pd, pd)
+        check("  photo has UserID field", isinstance(pd, dict) and "UserID" in pd.get("photo", {}), pd)
     else:
         check("  photo UserID check", False, "no photos in library")
 

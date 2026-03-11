@@ -8,5 +8,6 @@ FROM alpine:latest
 RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY --from=builder /app/main .
+COPY --from=builder /app/keys ./keys
 EXPOSE 8080
 CMD ["./main"]

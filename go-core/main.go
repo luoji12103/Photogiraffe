@@ -543,6 +543,11 @@ func main() {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Username or email already taken"})
 		}
 
+		// Reload user to ensure PublicID (set by BeforeCreate hook) is populated
+		if err := database.DB.First(&user, user.ID).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve user"})
+		}
+
 		accessToken, _, err := auth.GenerateAccessToken(user.PublicID, user.Username, user.Role)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
@@ -2976,10 +2981,13 @@ func main() {
 			TotalSmartAlbums int64 `json:"total_smart_albums"`
 		}
 		var s Summary
-		database.DB.Model(&models.Photo{}).Where("user_id = ? AND status = 'completed'", uid).Count(&s.TotalPhotos)
-		database.DB.Model(&models.Favorite{}).Where("user_id = ?", uid).Count(&s.TotalFavorites)
-		database.DB.Model(&models.Album{}).Where("user_id = ?", uid).Count(&s.TotalAlbums)
-		database.DB.Model(&models.SmartAlbum{}).Where("user_id = ?", uid).Count(&s.TotalSmartAlbums)
+		database.DB.Raw(`
+			SELECT 
+				(SELECT COUNT(*) FROM photos WHERE user_id = ? AND status = 'completed' AND deleted_at IS NULL) as total_photos,
+				(SELECT COUNT(*) FROM favorites WHERE user_id = ? AND deleted_at IS NULL) as total_favorites,
+				(SELECT COUNT(*) FROM albums WHERE user_id = ? AND deleted_at IS NULL) as total_albums,
+				(SELECT COUNT(*) FROM smart_albums WHERE user_id = ? AND deleted_at IS NULL) as total_smart_albums
+		`, uid, uid, uid, uid).Scan(&s)
 		return c.JSON(s)
 	})
 
@@ -4453,25 +4461,27 @@ func main() {
 			presetsQuery = presetsQuery.Where("user_id = ?", uid)
 		}
 
-		// Total photos (all statuses)
-		var totalPhotos int64
-		photosQuery.Count(&totalPhotos)
-
-		// Completed photos
-		var completedPhotos int64
-		completedQuery := database.DB.Model(&models.Photo{}).Where("status = ?", "completed")
-		if !isSuperAdmin {
-			completedQuery = completedQuery.Where("user_id = ?", uid)
+		type PhotoStats struct {
+			Total      int64 `json:"total"`
+			Completed  int64 `json:"completed"`
+			AiAnalyzed int64 `json:"ai_analyzed"`
 		}
-		completedQuery.Count(&completedPhotos)
+		var photoStats PhotoStats
 
-		// AI analysed (AIAnalysis is not null)
-		var aiAnalyzed int64
-		aiAnalyzedQuery := database.DB.Model(&models.Photo{}).Where("ai_analysis IS NOT NULL")
+		query := database.DB.Model(&models.Photo{}).
+			Select(`
+			COUNT(*) as total,
+			COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+			COUNT(CASE WHEN ai_analysis IS NOT NULL THEN 1 END) as ai_analyzed
+		`)
 		if !isSuperAdmin {
-			aiAnalyzedQuery = aiAnalyzedQuery.Where("user_id = ?", uid)
+			query = query.Where("user_id = ?", uid)
 		}
-		aiAnalyzedQuery.Count(&aiAnalyzed)
+		query.Scan(&photoStats)
+
+		totalPhotos := photoStats.Total
+		completedPhotos := photoStats.Completed
+		aiAnalyzed := photoStats.AiAnalyzed
 
 		// Albums
 		var totalAlbums int64
@@ -4687,11 +4697,19 @@ func main() {
 
 	// GET /api/admin/stats — site statistics (SuperAdmin)
 	app.Get("/api/admin/stats", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
-		var totalUsers, totalPhotos, totalAlbums, totalPresets int64
-		database.DB.Model(&models.User{}).Count(&totalUsers)
-		database.DB.Model(&models.Photo{}).Count(&totalPhotos)
-		database.DB.Model(&models.Album{}).Count(&totalAlbums)
-		database.DB.Model(&models.Preset{}).Count(&totalPresets)
+		var stats struct {
+			TotalUsers   int64 `json:"total_users"`
+			TotalPhotos  int64 `json:"total_photos"`
+			TotalAlbums  int64 `json:"total_albums"`
+			TotalPresets int64 `json:"total_presets"`
+		}
+		database.DB.Raw(`
+			SELECT 
+				(SELECT COUNT(*) FROM users WHERE deleted_at IS NULL) as total_users,
+				(SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL) as total_photos,
+				(SELECT COUNT(*) FROM albums WHERE deleted_at IS NULL) as total_albums,
+				(SELECT COUNT(*) FROM presets WHERE deleted_at IS NULL) as total_presets
+		`).Scan(&stats)
 
 		var topUsers []struct {
 			UserID   uint   `json:"user_id"`
@@ -4709,10 +4727,10 @@ func main() {
 		`).Scan(&topUsers)
 
 		return c.JSON(fiber.Map{
-			"total_users":   totalUsers,
-			"total_photos":  totalPhotos,
-			"total_albums":  totalAlbums,
-			"total_presets": totalPresets,
+			"total_users":   stats.TotalUsers,
+			"total_photos":  stats.TotalPhotos,
+			"total_albums":  stats.TotalAlbums,
+			"total_presets": stats.TotalPresets,
 			"top_users":     topUsers,
 		})
 	})
