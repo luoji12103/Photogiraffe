@@ -96,6 +96,41 @@ def section(title):
 
 
 # ─────────────────────────────────────────────────────────────────
+# Test Setup — Invite Code Infrastructure
+# ─────────────────────────────────────────────────────────────────
+
+def setup_test_environment():
+    """
+    Initialize test environment by disabling require_invite flag.
+    This allows registration tests to work without manual invite code setup.
+    First user (SuperAdmin) is always exempt from invite requirement anyway.
+    """
+    section("Test Setup — Disabling require_invite flag")
+    
+    # Get admin token first (or use internal secret if available)
+    # Try to login as admin user (created during initial setup)
+    d, status, _ = http("POST", "/api/auth/login",
+                        body={"username": "admin", "password": "testadmin1234"})
+    
+    if status == 200 and isinstance(d, dict) and "access_token" in d:
+        admin_token = d["access_token"]
+        print(f"  {PASS} Got admin token for setup")
+        
+        # Disable require_invite flag via admin endpoint
+        d, status, _ = http("PUT", "/api/admin/feature-flags/require_invite",
+                           body={"enabled": False}, token=admin_token)
+        if status == 200:
+            print(f"  {PASS} Disabled require_invite flag")
+            return admin_token
+        else:
+            print(f"  {SKIP} Could not disable require_invite (status={status}), proceeding anyway")
+            return admin_token
+    else:
+        print(f"  {SKIP} Could not get admin token (status={status}), proceeding with first-user exemption")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────
 # Auth
 # ─────────────────────────────────────────────────────────────────
 
@@ -833,6 +868,8 @@ def main():
     print("\n\033[1;36m  Photogiraffe Integration Test Suite\033[0m")
     print(f"  Target: {BASE_URL}")
     print(f"  Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    setup_test_environment()
 
     token = test_auth()
     if not token:
