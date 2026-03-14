@@ -224,6 +224,7 @@ function PhotoCard({
 
 /* ── Skeleton Card ── */
 function SkeletonCard({ masonry = false, index = 0 }: { masonry?: boolean; index?: number }) {
+  const [randomHeight] = useState(() => 120 + Math.random() * 80);
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -234,7 +235,7 @@ function SkeletonCard({ masonry = false, index = 0 }: { masonry?: boolean; index
         borderRadius: "var(--pg-radius-lg)",
         background: "var(--pg-bg-elevated)",
         aspectRatio: masonry ? undefined : "1 / 1",
-        height: masonry ? `${120 + Math.random() * 80}px` : undefined,
+        height: masonry ? `${randomHeight}px` : undefined,
         marginBottom: masonry ? "1.5rem" : undefined,
       }}
     />
