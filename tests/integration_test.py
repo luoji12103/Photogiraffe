@@ -20,6 +20,7 @@ import socket as _socket_module
 import urllib.request
 import urllib.error
 import urllib.parse
+import http.cookiejar
 
 BASE_URL = "http://127.0.0.1:8080"
 PASS = "\033[32m✓\033[0m"
@@ -28,6 +29,9 @@ SKIP = "\033[33m~\033[0m"
 
 failures = []
 passes = []
+csrf_token = None
+cookie_jar = http.cookiejar.CookieJar()
+http_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -35,6 +39,7 @@ passes = []
 # ─────────────────────────────────────────────────────────────────
 
 def http(method, path, body=None, token=None, form_data=None, expected_status=None):
+    global csrf_token
     url = BASE_URL + path
     headers = {}
     if token:
@@ -47,9 +52,13 @@ def http(method, path, body=None, token=None, form_data=None, expected_status=No
     else:
         data = None
 
+    if method in ("POST", "PUT", "DELETE", "PATCH") and csrf_token:
+        headers["X-Csrf-Token"] = csrf_token
+        headers["Cookie"] = f"__Host-csrf_={csrf_token}"
+
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with http_opener.open(req, timeout=10) as resp:
             status = resp.status
             raw = resp.read()
     except urllib.error.HTTPError as e:
@@ -62,6 +71,11 @@ def http(method, path, body=None, token=None, form_data=None, expected_status=No
         parsed = json.loads(raw)
     except Exception:
         parsed = raw.decode("utf-8", errors="replace")
+
+    for cookie in cookie_jar:
+        if cookie.name == "__Host-csrf_":
+            csrf_token = cookie.value
+            break
 
     return parsed, status, None
 
