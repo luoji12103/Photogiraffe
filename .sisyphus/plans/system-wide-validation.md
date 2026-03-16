@@ -35,6 +35,24 @@ Guardrails applied from consultation:
 - Require failing-test-first + minimal fix + regression proof for each bug.
 - No manual-only acceptance; all criteria agent-executable.
 
+### Wave 1 Completion Summary (2026-03-09 to 2026-03-11)
+**Status**: ✅ COMPLETE — All services healthy, baseline established, 4 defects resolved
+
+**Key Discoveries**:
+1. **CSRF Protection**: Fully implemented, blocking 79/261 Python tests (all POST/PUT/DELETE)
+2. **Invite Code System**: Feature flag controlled, requires test infrastructure updates
+3. **API Response Inconsistency**: Photo detail uses nested structure, list uses flat (documented, not blocking)
+4. **GORM Hook Reload**: Single occurrence in User.BeforeCreate, workaround applied
+5. **ESLint Issues**: 19 errors (3 high-severity bugs, 16 code quality issues)
+
+**Test Infrastructure Gaps Identified**:
+- No CSRF token extraction/injection in Python tests
+- No invite code fixture generation
+- No test data factories or isolation
+- No response schema validation
+
+**Adjusted Wave 2 Scope**: Added CSRF/invite test infrastructure tasks before functional validation
+
 ---
 
 ## Work Objectives
@@ -88,46 +106,49 @@ Every task includes executable QA scenarios with evidence outputs saved under:
 ### Parallel Execution Waves
 
 ```
-Wave 1 (Environment & Baseline Gates)
-├── Task 1: Compose bring-up + health contract [quick]
-├── Task 2: Seed/state policy + deterministic fixtures [quick]
-├── Task 3: Service readiness assertions (postgres/redis/minio/go/frontend/worker/nginx) [unspecified-high]
-├── Task 4: Baseline smoke for auth + protected routes [quick]
-└── Task 5: Evidence harness scaffolding [quick]
+Wave 1 (Environment & Baseline Gates) — ✅ COMPLETE
+├── Task 1: Compose bring-up + health contract [quick] — ✅ DONE
+├── Task 2: Seed/state policy + deterministic fixtures [quick] — ✅ DONE
+├── Task 3: Service readiness assertions (postgres/redis/minio/go/frontend/worker/nginx) [unspecified-high] — ✅ DONE
+├── Task 4: Baseline smoke for auth + protected routes [quick] — ✅ DONE
+└── Task 5: Evidence harness scaffolding [quick] — ✅ DONE
 
-Wave 2 (Functional Critical Path Gates)
-├── Task 6: Upload→queue→worker→status lifecycle verification [deep]
-├── Task 7: Metadata/EXIF/render/export/preset functional matrix [unspecified-high]
-├── Task 8: Admin/role boundary matrix [unspecified-high]
-├── Task 9: Error-path UX/API contract validation [quick]
-└── Task 10: Regression snapshot for current known fixes [quick]
+Wave 2 (Test Infrastructure + Functional Critical Path Gates) — ADJUSTED
+├── Task 6A: Python test infrastructure - CSRF token support [quick] — ✅ DONE
+├── Task 6B: Python test infrastructure - Invite code fixtures [quick] — ✅ DONE
+├── Task 6C: ESLint high-severity bug fixes (PhotoGrid Math.random) [quick] — ✅ DONE
+├── Task 7: Upload→queue→worker→status lifecycle verification [deep] — ✅ DONE
+├── Task 8: Metadata/EXIF/render/export/preset functional matrix [unspecified-high] — ✅ DONE
+├── Task 9: Admin/role boundary matrix [unspecified-high] — ✅ DONE
+├── Task 10: Error-path UX/API contract validation [quick] — ✅ DONE
+└── Task 11: Regression snapshot for current known fixes [quick] — ✅ DONE
 
 Wave 3 (Unit/Integration/Test Surface Exhaustion)
-├── Task 11: Go full suite + race runs (targeted + full) [deep]
-├── Task 12: Python worker tests + integration script hardening [unspecified-high]
-├── Task 13: Frontend lint/type/build + API proxy behavior checks [quick]
-├── Task 14: Cross-service integration rerun with clean state [unspecified-high]
-└── Task 15: Flakiness/repeatability checks (N reruns) [quick]
+├── Task 12: Go full suite + race runs (targeted + full) [deep] — ✅ DONE
+├── Task 13: Python worker tests + integration script hardening [unspecified-high] — ✅ DONE
+├── Task 14: Frontend lint/type/build + API proxy behavior checks [quick]
+├── Task 15: Cross-service integration rerun with clean state [unspecified-high]
+└── Task 16: Flakiness/repeatability checks (N reruns) [quick]
 
-Wave 4 (Deep Security Validation)
-├── Task 16: Auth/session/JWT/refresh/rotation abuse checks [deep]
-├── Task 17: CSRF/RBAC/rate-limit bypass attempts [deep]
-├── Task 18: Input validation/fuzz-lite malformed payload checks [unspecified-high]
-├── Task 19: Dependency/image/config audits (Go/Python/Node/containers) [unspecified-high]
-└── Task 20: Internal endpoint secret-boundary enforcement [quick]
+Wave 4 (Deep Security Validation) — IN PROGRESS
+├── Task 17: Auth/session/JWT/refresh/rotation abuse checks [deep] — ✅ DONE
+├── Task 18: CSRF/RBAC/rate-limit bypass attempts [deep] — ✅ DONE
+├── Task 19: Input validation/fuzz-lite malformed payload checks [unspecified-high] — ⏸️ TIMEOUT (deferred)
+├── Task 20: Dependency/image/config audits (Go/Python/Node/containers) [unspecified-high]
+└── Task 21: Internal endpoint secret-boundary enforcement [quick]
 
 Wave 5 (Atomic/Concurrency Fault Discovery)
-├── Task 21: SSE/event delivery under reconnect/restart stress [deep]
-├── Task 22: Queue at-least-once and duplicate-processing checks [deep]
-├── Task 23: Parallel upload/export/login contention scenarios [unspecified-high]
-├── Task 24: Partial outage resilience (redis/minio restarts) [deep]
-└── Task 25: Idempotency and rollback consistency checks [unspecified-high]
+├── Task 22: SSE/event delivery under reconnect/restart stress [deep]
+├── Task 23: Queue at-least-once and duplicate-processing checks [deep]
+├── Task 24: Parallel upload/export/login contention scenarios [unspecified-high]
+├── Task 25: Partial outage resilience (redis/minio restarts) [deep]
+└── Task 26: Idempotency and rollback consistency checks [unspecified-high]
 
 Wave 6 (Remediation Loops + Closure)
-├── Task 26: Defect triage + prioritization matrix [quick]
-├── Task 27: Atomic fix loop (fail test → minimal fix → regression) [deep]
-├── Task 28: Full gate rerun after all fixes [deep]
-└── Task 29: Final audit pack + release recommendation [oracle]
+├── Task 27: Defect triage + prioritization matrix [quick]
+├── Task 28: Atomic fix loop (fail test → minimal fix → regression) [deep]
+├── Task 29: Full gate rerun after all fixes [deep]
+└── Task 30: Final audit pack + release recommendation [oracle]
 ```
 
 ---

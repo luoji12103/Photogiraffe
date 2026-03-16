@@ -210,3 +210,77 @@ database.DB.Table("photos").
   - notifications(user_id, is_read): Notification filtering
 - Build verification passed successfully
 
+
+
+## [2026-03-09T16:26:00Z] Database Connection Pool Configuration (Task 15)
+- Added GORM connection pool settings in `go-core/database/db.go` after DB initialization
+- Configuration: MaxOpenConns(25), MaxIdleConns(5), ConnMaxLifetime(5min)
+- Pattern: `sqlDB, _ := db.DB(); sqlDB.SetMaxOpenConns(25); sqlDB.SetMaxIdleConns(5); sqlDB.SetConnMaxLifetime(5 * time.Minute)`
+- Prevents connection exhaustion under high load while maintaining reasonable resource usage
+- Build verification passed successfully
+
+## Task 15: Database Connection Pooling - COMPLETED
+
+**Configuration Applied:**
+- MaxOpenConns: 25 (prevents resource exhaustion)
+- MaxIdleConns: 5 (efficient connection reuse)
+- ConnMaxLifetime: 5 minutes (prevents stale connections)
+
+**Implementation:**
+- Added after DB initialization, before AutoMigrate
+- Used sqlDB, _ := db.DB() to get underlying sql.DB instance
+- All pool settings applied successfully
+
+**Verification:**
+- go build passes without errors
+- Connection pooling now active for all database operations
+
+**Performance Impact:**
+- Reduced connection overhead
+- Better resource management under load
+- Prevents connection exhaustion in high-traffic scenarios
+
+## [2026-03-09T16:42:00Z] Dashboard Query Optimization (Task 14)
+
+### Changes Made
+- **User Analytics Summary** (lines 2979-2982): Combined 4 separate count queries into single SQL query
+  - Before: 4 individual GORM Model().Count() calls
+  - After: Single raw SQL with subqueries for photos, favorites, albums, smart_albums
+  - Pattern: 
+
+- **Admin Stats** (lines 4693-4696): Combined 4 separate count queries into single SQL query  
+  - Before: 4 individual GORM Model().Count() calls to separate variables
+  - After: Single raw SQL with subqueries scanning into struct
+  - Updated return statement to use struct fields instead of individual variables
+
+### SQL Pattern Applied
+```go
+database.DB.Raw(`
+    SELECT 
+        (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL) as total_users,
+        (SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL) as total_photos,
+        (SELECT COUNT(*) FROM albums WHERE deleted_at IS NULL) as total_albums,
+        (SELECT COUNT(*) FROM presets WHERE deleted_at IS NULL) as total_presets
+`).Scan(&stats)
+```
+
+### Performance Impact
+- Reduced database round trips from 8 queries to 2 queries (75% reduction)
+- Both dashboard endpoints now use single aggregated queries
+- Response format unchanged - maintains API compatibility
+
+### Verification
+- `go build` passes without errors
+- LSP diagnostics clean after variable reference fixes
+
+## [2026-03-09T16:35:00Z] Dashboard Aggregated Count Query Optimization (Task 14)
+- Optimized `GET /api/stats` in `go-core/main.go` by replacing three separate photo count queries (`total_photos`, `completed_photos`, `ai_analyzed`) with one aggregated SQL select using conditional `COUNT(CASE WHEN ...)` expressions.
+- Kept role scoping unchanged: SuperAdmin sees global counts, non-admin users are filtered by `user_id` on the same aggregated query.
+- API response keys and JSON structure remain unchanged, so existing dashboard charts and frontend consumers continue to work without updates.
+- Verification: `go build` passed in `go-core` after the change.
+
+## [2026-03-09T16:42:00Z] Dashboard Query Optimization (Task 14)
+- Consolidated dashboard count lookups in `go-core/main.go` into single SQL aggregation calls per endpoint instead of multiple sequential `Count()` queries.
+- `/api/analytics/summary`: replaced separate photo/favorite/album/smart album counts with one `SELECT` statement returning identical JSON field names.
+- `/api/admin/stats`: replaced separate total user/photo/album/preset counts with one `SELECT` statement scanned into a struct; response shape unchanged.
+- Verification: `go build` succeeded in `go-core`.

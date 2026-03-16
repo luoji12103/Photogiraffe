@@ -20,3 +20,17 @@
 - Automated: lsp_diagnostics, build, test suite
 - Manual: Read every changed file, verify logic matches requirements
 - No task marked complete without both verification types passing
+
+## [2026-03-14] Task 6A Implementation Strategy
+
+### Approach
+- Minimal changes to existing `http()` helper
+- Extract CSRF token from response headers or JSON body
+- Store in global variable for reuse across tests
+- Inject into all POST/PUT/DELETE requests
+
+### Design Decisions
+- Use global `csrf_token` variable (simplest for existing test structure)
+- Extract from `csrf_token` field in auth responses
+- Fallback: call `GET /api/auth/csrf-token` if needed
+- No retry logic initially (add if tests show token expiration issues)

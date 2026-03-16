@@ -352,7 +352,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `security(rbac): implement explicit role whitelist checks`
   - Files: `go-core/main.go`
 
-- [ ] 4. Add CSRF Protection
+- [x] 4. Add CSRF Protection
 
   **What to do**:
   - Install `github.com/gofiber/fiber/v2/middleware/csrf` package
@@ -413,7 +413,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `security(csrf): add CSRF protection to state-changing operations`
   - Files: `go-core/main.go`, `go-core/go.mod`, `frontend/src/lib/api.ts`
 
-- [ ] 5. Migrate JWT to RS256
+- [x] 5. Migrate JWT to RS256
 
   **What to do**:
   - Generate RSA key pair (2048-bit minimum)
@@ -479,7 +479,7 @@ Max Concurrent: 5 (Waves 1-4)
 
 ### Wave 2: CRITICAL BUG FIXES
 
-- [ ] 6. Fix SSE Channel Race Condition
+- [x] 6. Fix SSE Channel Race Condition
 
   **What to do**:
   - Add channel state tracking (open/closed) with atomic operations
@@ -542,7 +542,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `fix(sse): prevent panic on closed channel send`
   - Files: `go-core/main.go`, `go-core/main_test.go`
 
-- [ ] 7. Fix MinIO Connection Leaks
+- [x] 7. Fix MinIO Connection Leaks
 
   **What to do**:
   - Wrap all MinIO `get_object()` calls with try/finally
@@ -594,7 +594,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `fix(worker): ensure MinIO connections always released`
   - Files: `python-worker/main.py`
 
-- [ ] 8. Fix Crypto Error Handling
+- [x] 8. Fix Crypto Error Handling
 
   **What to do**:
   - Add error check after `rand.Read()` in password reset token generation
@@ -644,7 +644,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `fix(auth): handle crypto errors in token generation`
   - Files: `go-core/main.go`
 
-- [ ] 9. Fix Login History Race Condition
+- [x] 9. Fix Login History Race Condition
 
   **What to do**:
   - Replace TOCTOU pattern with single atomic DELETE query
@@ -694,7 +694,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `fix(auth): atomic login history cleanup`
   - Files: `go-core/main.go`
 
-- [ ] 10. Add Comprehensive Error Handling
+- [x] 10. Add Comprehensive Error Handling
 
   **What to do**:
   - Add error handling to all goroutines (lines 513, 536, 763-764)
@@ -758,7 +758,7 @@ Max Concurrent: 5 (Waves 1-4)
 
 ### Wave 3: DATABASE PERFORMANCE OPTIMIZATION
 
-- [ ] 11. Add Database Indexes
+- [x] 11. Add Database Indexes
 
   **What to do**:
   - Add index on `photos(user_id)` for user photo listings
@@ -811,7 +811,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `perf(db): add indexes on frequently-queried columns`
   - Files: `go-core/database/db.go`
 
-- [ ] 12. Fix N+1 Queries
+- [x] 12. Fix N+1 Queries
 
   **What to do**:
   - Add `Preload("ExifData")` to all photo list queries
@@ -863,7 +863,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `perf(db): eliminate N+1 queries with eager loading`
   - Files: `go-core/main.go`
 
-- [ ] 13. Implement Redis Caching
+- [x] 13. Implement Redis Caching
 
   **What to do**:
   - Install Redis caching library (`github.com/go-redis/cache`)
@@ -965,7 +965,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `perf(admin): optimize dashboard queries with aggregations`
   - Files: `go-core/main.go`
 
-- [ ] 15. Configure Connection Pooling
+- [x] 15. Configure Connection Pooling
 
   **What to do**:
   - Configure GORM connection pool: `SetMaxOpenConns(25)`, `SetMaxIdleConns(5)`, `SetConnMaxLifetime(5min)`
