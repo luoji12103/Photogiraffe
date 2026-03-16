@@ -16,10 +16,15 @@ import (
 // UserID holds the user's public UUID (never the sequential integer PK),
 // preventing enumeration of internal database IDs.
 type Claims struct {
-	UserID   string `json:"uid"` // UUID v4 public identifier
+	UserID   string `json:"uid"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	jwt.RegisteredClaims
+}
+
+type ClaimsWithKID struct {
+	Claims
+	KeyID string `json:"kid,omitempty"`
 }
 
 func jwtSecret() []byte {
@@ -62,6 +67,14 @@ func GenerateAccessToken(publicID, username, role string) (string, time.Time, er
 		},
 	}
 
+	dbKey, dbErr := GetActiveDBKey()
+	if dbErr == nil {
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		token.Header["kid"] = dbKey.KeyID
+		signed, err := token.SignedString(dbKey.PrivateKey)
+		return signed, exp, err
+	}
+
 	pk, err := GetPrivateKey()
 	if err != nil {
 		return "", time.Time{}, err
@@ -77,6 +90,13 @@ func ValidateAccessToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
 		switch t.Method.Alg() {
 		case jwt.SigningMethodRS256.Alg():
+			if kid, ok := t.Header["kid"].(string); ok {
+				dbKey, dbErr := GetDBKeyByID(kid)
+				if dbErr == nil {
+					return dbKey.PublicKey, nil
+				}
+			}
+
 			pub, keyErr := GetPublicKey()
 			if keyErr != nil {
 				return nil, keyErr

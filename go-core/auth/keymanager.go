@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var (
@@ -17,7 +19,17 @@ var (
 	publicKey  *rsa.PublicKey
 	keysOnce   sync.Once
 	keysErr    error
+
+	dbKeys    []DBKey
+	dbKeysMux sync.RWMutex
 )
+
+type DBKey struct {
+	KeyID      string
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
+	ExpiresAt  time.Time
+}
 
 func privateKeyPath() string {
 	if p := os.Getenv("JWT_PRIVATE_KEY_PATH"); p != "" {
@@ -147,4 +159,99 @@ func GetJWKS(kid string) (map[string]any, error) {
 			},
 		},
 	}, nil
+}
+
+func LoadDBKeys(keys []DBKey) {
+	dbKeysMux.Lock()
+	defer dbKeysMux.Unlock()
+	dbKeys = keys
+}
+
+func GetActiveDBKey() (*DBKey, error) {
+	dbKeysMux.RLock()
+	defer dbKeysMux.RUnlock()
+
+	now := time.Now()
+	for i := range dbKeys {
+		if now.Before(dbKeys[i].ExpiresAt) {
+			return &dbKeys[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no active signing key found")
+}
+
+func GetDBKeyByID(kid string) (*DBKey, error) {
+	dbKeysMux.RLock()
+	defer dbKeysMux.RUnlock()
+
+	for i := range dbKeys {
+		if dbKeys[i].KeyID == kid {
+			return &dbKeys[i], nil
+		}
+	}
+	return nil, fmt.Errorf("key not found: %s", kid)
+}
+
+func GenerateRSAKeyPair() (*rsa.PrivateKey, *rsa.PublicKey, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+	return priv, &priv.PublicKey, nil
+}
+
+func EncodePrivateKeyPEM(key *rsa.PrivateKey) string {
+	privBytes := x509.MarshalPKCS1PrivateKey(key)
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privBytes,
+	})
+	return string(privPEM)
+}
+
+func EncodePublicKeyPEM(key *rsa.PublicKey) (string, error) {
+	pubBytes, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return "", err
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	})
+	return string(pubPEM), nil
+}
+
+func DecodePrivateKeyPEM(pemStr string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM")
+	}
+
+	if parsedPKCS8, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		rsaKey, ok := parsedPKCS8.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not RSA key")
+		}
+		return rsaKey, nil
+	}
+
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+func DecodePublicKeyPEM(pemStr string) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM")
+	}
+
+	parsedKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	rsaKey, ok := parsedKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not RSA public key")
+	}
+	return rsaKey, nil
 }

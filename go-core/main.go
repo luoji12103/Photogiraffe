@@ -398,6 +398,35 @@ func main() {
 		Redis: queue.RedisClient,
 	})
 
+	// Load signing keys from database for rotation support
+	var dbSigningKeys []models.SigningKey
+	database.DB.Where("is_active = ? AND expires_at > ?", true, time.Now()).Find(&dbSigningKeys)
+	if len(dbSigningKeys) > 0 {
+		var loadedKeys []auth.DBKey
+		for _, sk := range dbSigningKeys {
+			priv, err := auth.DecodePrivateKeyPEM(sk.PrivateKey)
+			if err != nil {
+				log.Printf("failed to decode private key %s: %v", sk.KeyID, err)
+				continue
+			}
+			pub, err := auth.DecodePublicKeyPEM(sk.PublicKey)
+			if err != nil {
+				log.Printf("failed to decode public key %s: %v", sk.KeyID, err)
+				continue
+			}
+			loadedKeys = append(loadedKeys, auth.DBKey{
+				KeyID:      sk.KeyID,
+				PrivateKey: priv,
+				PublicKey:  pub,
+				ExpiresAt:  sk.ExpiresAt,
+			})
+		}
+		if len(loadedKeys) > 0 {
+			auth.LoadDBKeys(loadedKeys)
+			log.Printf("loaded %d signing keys from database", len(loadedKeys))
+		}
+	}
+
 	app := fiber.New(fiber.Config{
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
@@ -992,6 +1021,73 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send email: " + err.Error()})
 		}
 		return c.JSON(fiber.Map{"message": "Test email sent to " + user.Email})
+	})
+
+	// POST /api/admin/keys/rotate — rotate JWT signing key (SuperAdmin only)
+	app.Post("/api/admin/keys/rotate", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		priv, pub, err := auth.GenerateRSAKeyPair()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate key pair"})
+		}
+
+		privPEM := auth.EncodePrivateKeyPEM(priv)
+		pubPEM, err := auth.EncodePublicKeyPEM(pub)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to encode public key"})
+		}
+
+		keyID := fmt.Sprintf("key-%d", time.Now().Unix())
+		expiresAt := time.Now().Add(7 * 24 * time.Hour)
+
+		newKey := models.SigningKey{
+			KeyID:      keyID,
+			PrivateKey: privPEM,
+			PublicKey:  pubPEM,
+			IsActive:   true,
+			ExpiresAt:  expiresAt,
+		}
+
+		if err := database.DB.Create(&newKey).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save key"})
+		}
+
+		auth.LoadDBKeys([]auth.DBKey{{
+			KeyID:      keyID,
+			PrivateKey: priv,
+			PublicKey:  pub,
+			ExpiresAt:  expiresAt,
+		}})
+
+		return c.JSON(fiber.Map{
+			"message":    "key rotated successfully",
+			"key_id":     keyID,
+			"expires_at": expiresAt,
+		})
+	})
+
+	// GET /api/admin/keys — list all signing keys (SuperAdmin only)
+	app.Get("/api/admin/keys", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var keys []models.SigningKey
+		database.DB.Order("created_at desc").Find(&keys)
+
+		type KeyInfo struct {
+			KeyID     string    `json:"key_id"`
+			IsActive  bool      `json:"is_active"`
+			CreatedAt time.Time `json:"created_at"`
+			ExpiresAt time.Time `json:"expires_at"`
+		}
+
+		result := make([]KeyInfo, len(keys))
+		for i, k := range keys {
+			result[i] = KeyInfo{
+				KeyID:     k.KeyID,
+				IsActive:  k.IsActive,
+				CreatedAt: k.CreatedAt,
+				ExpiresAt: k.ExpiresAt,
+			}
+		}
+
+		return c.JSON(result)
 	})
 
 	// ─── Phase 23 — Photo Notes + Timeline ───────────────────────────────────

@@ -9,15 +9,15 @@ import (
 
 type User struct {
 	gorm.Model
-	PublicID          string `gorm:"uniqueIndex"` // UUID v4 — safe for external exposure; auto-set by BeforeCreate
-	Username          string `gorm:"uniqueIndex;not null"`
-	Email             string `gorm:"uniqueIndex;not null"`
-	PasswordHash      string `gorm:"not null"`
-	Role              string `gorm:"default:'StandardUser'"` // e.g., SuperAdmin, StandardUser
-	Photos            []Photo
+	PublicID     string `gorm:"uniqueIndex"` // UUID v4 — safe for external exposure; auto-set by BeforeCreate
+	Username     string `gorm:"uniqueIndex;not null"`
+	Email        string `gorm:"uniqueIndex;not null"`
+	PasswordHash string `gorm:"not null"`
+	Role         string `gorm:"default:'StandardUser'"` // e.g., SuperAdmin, StandardUser
+	Photos       []Photo
 	// ─── Phase 33 — Storage Quota ───
-	StorageQuotaBytes int64  `gorm:"default:10737418240"` // 10 GB default
-	StorageUsedBytes  int64  `gorm:"default:0"`
+	StorageQuotaBytes int64 `gorm:"default:10737418240"` // 10 GB default
+	StorageUsedBytes  int64 `gorm:"default:0"`
 }
 
 // BeforeCreate auto-generates a UUID v4 PublicID if not already set.
@@ -42,9 +42,9 @@ type Photo struct {
 	AIAnalysis       *string `gorm:"type:jsonb"` // nullable; NULL until AI analysis is completed
 	InferredParams   *string `gorm:"type:jsonb"` // nullable; AI-inferred colour-adjustment parameters
 	AppliedPresetID  *uint   // nullable; last preset explicitly applied
-	DominantColors   *string `gorm:"type:jsonb"`    // nullable; [{hex,bucket,pct},...] extracted by worker
+	DominantColors   *string `gorm:"type:jsonb"`       // nullable; [{hex,bucket,pct},...] extracted by worker
 	PHash            *string `gorm:"type:varchar(16)"` // nullable; 64-bit perceptual hash as 16-char hex, computed by worker
-	AutoTags         *string `gorm:"type:jsonb"`    // nullable; AI auto-tags from CLIP zero-shot classification
+	AutoTags         *string `gorm:"type:jsonb"`       // nullable; AI auto-tags from CLIP zero-shot classification
 	// ─── Phase 31 ───
 	Rating     int    `gorm:"default:0"`  // 0 = unrated, 1–5
 	ColorLabel string `gorm:"default:''"` // "" | red | orange | yellow | green | blue | purple
@@ -55,9 +55,9 @@ type Photo struct {
 // TargetType="all"  applies globally to every authenticated user.
 type AIRateLimit struct {
 	gorm.Model
-	TargetType   string `gorm:"not null;default:'all'"`  // "user" | "all"
+	TargetType   string `gorm:"not null;default:'all'"` // "user" | "all"
 	TargetUserID *uint  // nil when TargetType="all"
-	Window       string `gorm:"not null"`               // "second" | "minute" | "hour" | "day" | "week" | "month"
+	Window       string `gorm:"not null"` // "second" | "minute" | "hour" | "day" | "week" | "month"
 	MaxRequests  int    `gorm:"not null;default:10"`
 	Enabled      bool   `gorm:"default:true"`
 	Note         string // optional admin-visible note
@@ -133,6 +133,16 @@ type RefreshToken struct {
 	Revoked   bool      `gorm:"default:false"`
 }
 
+// SigningKey stores RSA key pairs for JWT signing with rotation support.
+type SigningKey struct {
+	gorm.Model
+	KeyID      string    `gorm:"uniqueIndex;not null"` // kid for JWKS
+	PrivateKey string    `gorm:"type:text;not null"`   // PEM-encoded RSA private key
+	PublicKey  string    `gorm:"type:text;not null"`   // PEM-encoded RSA public key
+	IsActive   bool      `gorm:"default:true;index"`   // only active keys used for signing
+	ExpiresAt  time.Time `gorm:"not null"`             // grace period end
+}
+
 // ShareLink enables unauthenticated public access to a single photo.
 type ShareLink struct {
 	gorm.Model
@@ -201,7 +211,7 @@ type StorageConfig struct {
 type SmtpConfig struct {
 	gorm.Model
 	Host     string
-	Port     int    `gorm:"default:587"`
+	Port     int `gorm:"default:587"`
 	Username string
 	Password string `gorm:"type:text"` // never returned in plaintext via API
 	FromName string `gorm:"default:'Photogiraffe'"`
@@ -222,7 +232,7 @@ type PasswordResetToken struct {
 // LoginHistory records the last 10 login attempts per user.
 type LoginHistory struct {
 	gorm.Model
-	UserID    uint   `gorm:"not null;index"`
+	UserID    uint `gorm:"not null;index"`
 	IPAddress string
 	UserAgent string `gorm:"type:text"`
 	Success   bool
