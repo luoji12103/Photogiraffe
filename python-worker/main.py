@@ -6,6 +6,9 @@ import json
 import zipfile
 import requests
 import base64
+import multiprocessing
+import signal
+import sys
 from io import BytesIO
 from PIL import Image, ImageCms, ImageDraw, ImageFont
 import numpy as np
@@ -23,7 +26,7 @@ from zhipuai import ZhipuAI
 
 register_heif_opener()
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [Worker-%(process)d] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # ─── Color space helpers (Phase 3 Step 1) ─────────────────────────────────────
@@ -1574,20 +1577,18 @@ def _update_export_status(job_id: str, status: str,
         logger.warning(f"[export:{job_id}] Failed to update status to {status}: {e}")
 
 
-def main():
-    logger.info("Python Worker starting...")
+def worker_process(worker_id):
+    logger.info(f"Worker {worker_id} starting...")
     
-    # Wait for services to be ready
     time.sleep(5)
     
     r = init_redis()
     minio_client = init_minio()
 
-    logger.info("Python Worker started. Waiting for tasks...")
+    logger.info(f"Worker {worker_id} started. Waiting for tasks...")
     while True:
         try:
-            # Read from Redis Streams
-            messages = r.xreadgroup(GROUP_NAME, CONSUMER_NAME,
+            messages = r.xreadgroup(GROUP_NAME, f"{CONSUMER_NAME}-{worker_id}",
                                     {STREAM_NAME: ">", AI_STREAM_NAME: ">",
                                      EXPORT_STREAM_NAME: ">", INFER_STREAM_NAME: ">"},
                                     count=1, block=5000)
@@ -1597,7 +1598,7 @@ def main():
 
             for stream, message_list in messages:
                 for message_id, message_data in message_list:
-                    logger.info(f"Received task from {stream}: {message_id} -> {message_data}")
+                    logger.info(f"Worker {worker_id} received task from {stream}: {message_id}")
                     
                     if stream == STREAM_NAME:
                         photo_id = message_data.get("photo_id")
@@ -1606,11 +1607,8 @@ def main():
                         if photo_id and minio_path:
                             success = process_image(minio_client, photo_id, minio_path)
                             if success:
-                                # ACK the message
                                 r.xack(STREAM_NAME, GROUP_NAME, message_id)
-                                logger.info(f"Acknowledged message {message_id}")
                         else:
-                            logger.warning(f"Invalid message data: {message_data}")
                             r.xack(STREAM_NAME, GROUP_NAME, message_id)
                     
                     elif stream == AI_STREAM_NAME:
@@ -1620,17 +1618,13 @@ def main():
                         base_url = message_data.get("base_url", "")
                         api_key = message_data.get("api_key")
                         model_name = message_data.get("model_name")
-                        
                         prompt_language = message_data.get("prompt_language", "en")
 
                         if photo_id and minio_path and api_key and model_name:
                             success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language)
                             if success:
-                                # ACK the message
                                 r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
-                                logger.info(f"Acknowledged message {message_id}")
                         else:
-                            logger.warning(f"Invalid message data for AI analysis: {message_data}")
                             r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
 
                     elif stream == EXPORT_STREAM_NAME:
@@ -1645,11 +1639,9 @@ def main():
                         elif job_id and photo_id:
                             success = process_export_task(minio_client, job_id, photo_id, opts_json)
                         else:
-                            logger.warning(f"Invalid export message data: {message_data}")
-                            success = True  # ACK anyway to clear bad message
+                            success = True
 
                         r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
-                        logger.info(f"Acknowledged export message {message_id} (success={success})")
 
                     elif stream == INFER_STREAM_NAME:
                         photo_id   = message_data.get("photo_id")
@@ -1658,21 +1650,42 @@ def main():
                         base_url   = message_data.get("base_url", "")
                         api_key    = message_data.get("api_key")
                         model_name = message_data.get("model_name")
-
                         prompt_language = message_data.get("prompt_language", "en")
 
                         if photo_id and minio_path and api_key and model_name:
                             process_infer_params_task(minio_client, photo_id, minio_path,
                                                       provider, api_key, model_name, base_url, prompt_language)
-                        else:
-                            logger.warning(f"Invalid infer-params message data: {message_data}")
 
                         r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
-                        logger.info(f"Acknowledged infer-params message {message_id}")
 
         except Exception as e:
-            logger.error(f"Error in worker loop: {e}")
+            logger.error(f"Worker {worker_id} error: {e}")
             time.sleep(5)
+
+def main():
+    num_workers = int(os.getenv("WORKER_POOL_SIZE", "3"))
+    logger.info(f"Starting Python Worker Pool with {num_workers} workers...")
+    
+    workers = []
+    for i in range(num_workers):
+        p = multiprocessing.Process(target=worker_process, args=(i,))
+        p.start()
+        workers.append(p)
+        logger.info(f"Started worker {i} (PID: {p.pid})")
+    
+    def shutdown_handler(signum, frame):
+        logger.info("Shutdown signal received, terminating workers...")
+        for p in workers:
+            p.terminate()
+        for p in workers:
+            p.join(timeout=5)
+        sys.exit(0)
+    
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
+    
+    for p in workers:
+        p.join()
 
 if __name__ == "__main__":
     main()
