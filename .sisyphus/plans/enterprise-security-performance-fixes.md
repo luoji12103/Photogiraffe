@@ -916,7 +916,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `perf(cache): implement Redis caching for static data`
   - Files: `go-core/main.go`, `go-core/go.mod`
 
-- [ ] 14. Optimize Dashboard Queries
+- [x] 14. Optimize Dashboard Queries
 
   **What to do**:
   - Combine 5 separate count queries into single query with aggregations
@@ -1017,7 +1017,7 @@ Max Concurrent: 5 (Waves 1-4)
 
 ### Wave 4: SCALABILITY
 
-- [ ] 16. Migrate SSE to Redis Pub/Sub
+- [x] 16. Migrate SSE to Redis Pub/Sub
 
   **What to do**:
   - Replace in-memory SSE hub with Redis pub/sub
@@ -1080,7 +1080,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `feat(sse): migrate to Redis pub/sub for horizontal scaling`
   - Files: `go-core/main.go`, `go-core/queue/redis.go`
 
-- [ ] 17. Implement Python Worker Pool
+- [x] 17. Implement Python Worker Pool
 
   **What to do**:
   - Modify `python-worker/main.py` to spawn 3-5 worker processes
@@ -1133,7 +1133,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `perf(worker): implement worker pool for parallel processing`
   - Files: `python-worker/main.py`
 
-- [ ] 18. Add Rate Limiting to All Endpoints
+- [x] 18. Add Rate Limiting to All Endpoints
 
   **What to do**:
   - Install `github.com/gofiber/fiber/v2/middleware/limiter`
@@ -1237,7 +1237,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `security(secrets): implement JWT key rotation with grace period`
   - Files: `go-core/auth/jwt.go`, `go-core/main.go`, `go-core/models/models.go`
 
-- [ ] 20. Add Input Validation Middleware
+- [x] 20. Add Input Validation Middleware
 
   **What to do**:
   - Install validation library (`github.com/go-playground/validator/v10`)
