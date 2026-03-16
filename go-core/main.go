@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,8 +18,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"photogiraffe/core/auth"
@@ -45,79 +44,41 @@ import (
 // Each connected browser tab gets its own buffered channel.
 
 var (
-	sseMu  sync.RWMutex
-	sseHub = make(map[uint][]*sseClient)
+	redisCache *cache.Cache
 )
 
-type sseClient struct {
-	ch     chan string
-	closed atomic.Bool
-}
+// sseSubscribe creates a channel that receives SSE messages from Redis pub/sub
+func sseSubscribe(uid uint) chan string {
+	ch := make(chan string, 32)
+	go func() {
+		defer close(ch)
+		ctx := context.Background()
+		pubsub := queue.RedisClient.Subscribe(ctx, fmt.Sprintf("sse:user:%d", uid))
+		defer pubsub.Close()
 
-func newSSEClient() *sseClient {
-	return &sseClient{ch: make(chan string, 32)}
-}
-
-func (c *sseClient) send(msg string) {
-	if c.closed.Load() {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("panic sending SSE: %v", r)
+		for {
+			msg, err := pubsub.ReceiveMessage(ctx)
+			if err != nil {
+				return
+			}
+			select {
+			case ch <- msg.Payload:
+			default:
+			}
 		}
 	}()
-	select {
-	case c.ch <- msg:
-	default: // drop if buffer full (slow client)
-	}
+	return ch
 }
 
-func (c *sseClient) close() {
-	if !c.closed.CompareAndSwap(false, true) {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("panic closing SSE channel: %v", r)
-		}
-	}()
-	close(c.ch)
+func sseUnsubscribe(uid uint, ch chan string) {
+	// Channel closed by goroutine when pubsub closes
 }
 
-func sseSubscribe(userID uint) chan string {
-	client := newSSEClient()
-	sseMu.Lock()
-	sseHub[userID] = append(sseHub[userID], client)
-	sseMu.Unlock()
-	return client.ch
-}
-
-func sseUnsubscribe(userID uint, ch chan string) {
-	sseMu.Lock()
-	defer sseMu.Unlock()
-	clients := sseHub[userID]
-	for i, c := range clients {
-		if c.ch == ch {
-			sseHub[userID] = append(clients[:i], clients[i+1:]...)
-			c.close()
-			break
-		}
-	}
-	if len(sseHub[userID]) == 0 {
-		delete(sseHub, userID)
-	}
-}
-
-// broadcastToUser pushes an SSE event to all open tabs for a given internal userID.
+// broadcastToUser publishes an SSE event to Redis for a given internal userID
 func broadcastToUser(userID uint, eventType, data string) {
 	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, data)
-	sseMu.RLock()
-	clients := append([]*sseClient(nil), sseHub[userID]...) // copy slice
-	sseMu.RUnlock()
-	for _, client := range clients {
-		client.send(msg)
-	}
+	ctx := context.Background()
+	queue.RedisClient.Publish(ctx, fmt.Sprintf("sse:user:%d", userID), msg)
 }
 
 // createNotification persists a Notification row for the user (Phase 34).
