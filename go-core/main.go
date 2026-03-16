@@ -419,6 +419,21 @@ func main() {
 		},
 	}))
 
+	app.Use(limiter.New(limiter.Config{
+		Max:        60,
+		Expiration: 1 * time.Minute,
+		Storage:    limiter.ConfigDefault.Storage,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Rate limit exceeded"})
+		},
+		Next: func(c *fiber.Ctx) bool {
+			return strings.HasPrefix(c.Path(), "/internal/") || c.Path() == "/health"
+		},
+	}))
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		// Check DB connection
 		sqlDB, err := database.DB.DB()
