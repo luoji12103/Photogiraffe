@@ -81,6 +81,20 @@ func broadcastToUser(userID uint, eventType, data string) {
 	queue.RedisClient.Publish(ctx, fmt.Sprintf("sse:user:%d", userID), msg)
 }
 
+func validatePagination(c *fiber.Ctx) (int, int, error) {
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+
+	if page < 1 {
+		return 0, 0, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "page must be ≥1"})
+	}
+	if limit < 1 || limit > 100 {
+		return 0, 0, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "limit must be between 1 and 100"})
+	}
+
+	return page, limit, nil
+}
+
 // createNotification persists a Notification row for the user (Phase 34).
 func createNotification(userID uint, notifType, title, body string) {
 	if err := database.DB.Create(&models.Notification{
@@ -2165,15 +2179,20 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
 		}
 
-		// Parse export options from request body (permissive: use raw JSON)
 		optsRaw := c.Body()
 		if len(optsRaw) == 0 {
 			optsRaw = []byte("{}")
 		}
-		// Validate it's valid JSON and build a mutable map
 		var optMap map[string]interface{}
 		if err := json.Unmarshal(optsRaw, &optMap); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid export options JSON"})
+		}
+
+		if width, ok := optMap["width"].(float64); ok && (width < 1 || width > 8000) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "width must be between 1 and 8000"})
+		}
+		if height, ok := optMap["height"].(float64); ok && (height < 1 || height > 8000) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "height must be between 1 and 8000"})
 		}
 
 		// ── Server-side inject overlay assets (MinIO paths never exposed to client) ──
