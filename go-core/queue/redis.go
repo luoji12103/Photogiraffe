@@ -32,14 +32,18 @@ func InitRedis() {
 	fmt.Println("Successfully connected to Redis!")
 }
 
-func PublishImageProcessingTask(photoID uint, minioPath string) error {
+func PublishImageProcessingTask(photoID uint, minioPath, traceparent string) error {
 	streamName := "image_processing_queue"
+	values := map[string]interface{}{
+		"photo_id":   photoID,
+		"minio_path": minioPath,
+	}
+	if traceparent != "" {
+		values["traceparent"] = traceparent
+	}
 	err := RedisClient.XAdd(Ctx, &redis.XAddArgs{
 		Stream: streamName,
-		Values: map[string]interface{}{
-			"photo_id":   photoID,
-			"minio_path": minioPath,
-		},
+		Values: values,
 	}).Err()
 
 	if err != nil {
@@ -67,27 +71,35 @@ func PushTask(streamName string, values map[string]interface{}) error {
 }
 
 // PublishExportTask pushes an export job onto the export_queue Redis Stream.
-func PublishExportTask(jobID uint, photoID uint, optsJSON string) error {
-	return PushTask("export_queue", map[string]interface{}{
+func PublishExportTask(jobID uint, photoID uint, optsJSON, traceparent string) error {
+	values := map[string]interface{}{
 		"job_id":         jobID,
 		"photo_id":       photoID,
 		"export_options": optsJSON,
-	})
+	}
+	if traceparent != "" {
+		values["traceparent"] = traceparent
+	}
+	return PushTask("export_queue", values)
 }
 
 // PublishAlbumExportTask pushes an album export job onto the export_queue Redis Stream.
-func PublishAlbumExportTask(jobID uint, albumID uint, optsJSON string) error {
-	return PushTask("export_queue", map[string]interface{}{
+func PublishAlbumExportTask(jobID uint, albumID uint, optsJSON, traceparent string) error {
+	values := map[string]interface{}{
 		"job_id":         jobID,
 		"album_id":       albumID,
 		"type":           "album_export",
 		"export_options": optsJSON,
-	})
+	}
+	if traceparent != "" {
+		values["traceparent"] = traceparent
+	}
+	return PushTask("export_queue", values)
 }
 
 // PublishInferParamsTask pushes an AI parameter inference job onto infer_params_queue.
-func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, apiKey, modelName, promptLanguage string) error {
-	return PushTask("infer_params_queue", map[string]interface{}{
+func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, apiKey, modelName, promptLanguage, traceparent string) error {
+	values := map[string]interface{}{
 		"photo_id":        photoID,
 		"minio_path":      minioPath,
 		"provider":        provider,
@@ -95,5 +107,9 @@ func PublishInferParamsTask(photoID uint, minioPath string, provider, baseURL, a
 		"api_key":         apiKey,
 		"model_name":      modelName,
 		"prompt_language": promptLanguage,
-	})
+	}
+	if traceparent != "" {
+		values["traceparent"] = traceparent
+	}
+	return PushTask("infer_params_queue", values)
 }

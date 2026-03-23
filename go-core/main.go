@@ -10,14 +10,18 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"math/bits"
+	"net/http"
 	"net/smtp"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"photogiraffe/core/auth"
@@ -26,7 +30,9 @@ import (
 	"photogiraffe/core/queue"
 	"photogiraffe/core/storage"
 
+	"github.com/ansrivas/fiberprometheus/v2"
 	"github.com/go-redis/cache/v9"
+	"github.com/gofiber/contrib/otelfiber/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/csrf"
@@ -35,6 +41,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/valyala/fasthttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -44,7 +56,9 @@ import (
 // Each connected browser tab gets its own buffered channel.
 
 var (
-	redisCache *cache.Cache
+	redisCache     *cache.Cache
+	logger         *slog.Logger
+	tracerShutdown func(context.Context) error
 )
 
 // sseSubscribe creates a channel that receives SSE messages from Redis pub/sub
@@ -332,24 +346,79 @@ func recordLoginHistory(userID uint, ip, ua string, success bool) {
 	`, userID)
 }
 
+func initTracing(ctx context.Context) error {
+	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	if endpoint == "" {
+		endpoint = "jaeger:4318"
+	}
+
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure(),
+	)
+	if err != nil {
+		return err
+	}
+
+	resource, err := sdkresource.Merge(
+		sdkresource.Default(),
+		sdkresource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName("photogiraffe-go-core"),
+		),
+	)
+	if err != nil {
+		return err
+	}
+
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(resource),
+	)
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	tracerShutdown = provider.Shutdown
+	return nil
+}
+
 func main() {
+	logFormat := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT")))
+	if logFormat == "json" {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	} else {
+		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	}
+	slog.SetDefault(logger)
+
+	if err := initTracing(context.Background()); err != nil {
+		logger.Error("failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET must be set. Refusing to start without JWT signing secret.")
+		logger.Error("JWT_SECRET must be set")
+		os.Exit(1)
 	}
 	if len(jwtSecret) < 32 {
-		log.Fatal("JWT_SECRET must be at least 32 characters.")
+		logger.Error("JWT_SECRET must be at least 32 characters")
+		os.Exit(1)
 	}
 	jwtKeyID := os.Getenv("JWT_KEY_ID")
 	if jwtKeyID == "" {
 		jwtKeyID = time.Now().UTC().Format("2006-01-02")
 	}
 	if err := auth.InitKeys(); err != nil {
-		log.Fatalf("failed to initialize JWT RSA keys: %v", err)
+		logger.Error("failed to initialize JWT RSA keys", "error", err)
+		os.Exit(1)
 	}
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 	if internalSecret == "" {
-		log.Fatal("INTERNAL_SECRET environment variable is not set. Refusing to start without worker authentication.")
+		logger.Error("INTERNAL_SECRET environment variable is not set")
+		os.Exit(1)
 	}
 	corsAllowOrigin := os.Getenv("CORS_ALLOW_ORIGIN")
 	if corsAllowOrigin == "" {
@@ -406,12 +475,12 @@ func main() {
 		for _, sk := range dbSigningKeys {
 			priv, err := auth.DecodePrivateKeyPEM(sk.PrivateKey)
 			if err != nil {
-				log.Printf("failed to decode private key %s: %v", sk.KeyID, err)
+				logger.Warn("failed to decode private key", "key_id", sk.KeyID, "error", err)
 				continue
 			}
 			pub, err := auth.DecodePublicKeyPEM(sk.PublicKey)
 			if err != nil {
-				log.Printf("failed to decode public key %s: %v", sk.KeyID, err)
+				logger.Warn("failed to decode public key", "key_id", sk.KeyID, "error", err)
 				continue
 			}
 			loadedKeys = append(loadedKeys, auth.DBKey{
@@ -423,7 +492,7 @@ func main() {
 		}
 		if len(loadedKeys) > 0 {
 			auth.LoadDBKeys(loadedKeys)
-			log.Printf("loaded %d signing keys from database", len(loadedKeys))
+			logger.Info("loaded signing keys from database", "count", len(loadedKeys))
 		}
 	}
 
@@ -431,10 +500,38 @@ func main() {
 		BodyLimit: 100 * 1024 * 1024, // 100 MB limit
 	})
 
+	app.Use(func(c *fiber.Ctx) error {
+		requestID := c.Get("X-Request-Id")
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+		c.Set("X-Request-Id", requestID)
+		c.Locals("request_id", requestID)
+
+		startedAt := time.Now()
+		err := c.Next()
+		attrs := []any{
+			"request_id", requestID,
+			"method", c.Method(),
+			"path", c.Path(),
+			"status", c.Response().StatusCode(),
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		}
+		if userID, ok := c.Locals("userID").(uint); ok && userID != 0 {
+			attrs = append(attrs, "user_id", userID)
+		}
+		if err != nil {
+			logger.Error("request failed", append(attrs, "error", err)...)
+			return err
+		}
+		logger.Info("request completed", attrs...)
+		return nil
+	})
+
 	app.Use(fiberrecover.New(fiberrecover.Config{
 		EnableStackTrace: true,
 		StackTraceHandler: func(c *fiber.Ctx, e interface{}) {
-			log.Printf("[PANIC RECOVERY] path=%s method=%s panic=%v", c.Path(), c.Method(), e)
+			logger.Error("panic recovered", "path", c.Path(), "method", c.Method(), "panic", e)
 		},
 	}))
 
@@ -473,17 +570,53 @@ func main() {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Rate limit exceeded"})
 		},
 		Next: func(c *fiber.Ctx) bool {
-			return strings.HasPrefix(c.Path(), "/internal/") || c.Path() == "/health"
+			return strings.HasPrefix(c.Path(), "/internal/") || c.Path() == "/health" || c.Path() == "/health/ready" || c.Path() == "/metrics"
 		},
 	}))
 
+	prometheus := fiberprometheus.New("photogiraffe_go_core")
+	prometheus.RegisterAt(app, "/metrics")
+	prometheus.SetSkipPaths([]string{"/metrics", "/health", "/health/ready"})
+	app.Use(prometheus.Middleware)
+	app.Use(otelfiber.Middleware(otelfiber.WithNext(func(c *fiber.Ctx) bool {
+		return c.Path() == "/metrics" || c.Path() == "/health" || c.Path() == "/health/ready"
+	})))
+
 	app.Get("/health", func(c *fiber.Ctx) error {
-		// Check DB connection
+		return c.JSON(fiber.Map{"status": "healthy"})
+	})
+
+	app.Get("/health/ready", func(c *fiber.Ctx) error {
+		status := fiber.Map{"status": "healthy"}
+		checks := fiber.Map{}
+
 		sqlDB, err := database.DB.DB()
 		if err != nil || sqlDB.Ping() != nil {
-			return c.Status(fiber.StatusInternalServerError).SendString("Database connection failed")
+			checks["database"] = "unhealthy"
+			status["status"] = "degraded"
+		} else {
+			checks["database"] = "healthy"
 		}
-		return c.SendString("Go Core API is healthy! Database connection is active.")
+
+		if err := queue.RedisClient.Ping(queue.Ctx).Err(); err != nil {
+			checks["redis"] = "unhealthy"
+			status["status"] = "degraded"
+		} else {
+			checks["redis"] = "healthy"
+		}
+
+		if _, err := storage.MinioClient.BucketExists(context.Background(), "photos"); err != nil {
+			checks["minio"] = "unhealthy"
+			status["status"] = "degraded"
+		} else {
+			checks["minio"] = "healthy"
+		}
+
+		status["checks"] = checks
+		if status["status"] != "healthy" {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(status)
+		}
+		return c.JSON(status)
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1396,8 +1529,13 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save photo metadata"})
 		}
 
+		traceparent := c.Get("Traceparent")
+		if traceparent == "" {
+			traceparent = c.Get("traceparent")
+		}
+
 		// Publish task to Redis Stream
-		err = queue.PublishImageProcessingTask(photo.ID, objectName)
+		err = queue.PublishImageProcessingTask(photo.ID, objectName, traceparent)
 		if err != nil {
 			log.Printf("Failed to publish task: %v", err)
 			// We don't return an error here, as the photo is already saved and uploaded.
@@ -1760,6 +1898,10 @@ func main() {
 		if promptLang == "" {
 			promptLang = "en"
 		}
+		traceparent := c.Get("Traceparent")
+		if traceparent == "" {
+			traceparent = c.Get("traceparent")
+		}
 		taskData := map[string]interface{}{
 			"photo_id":        photo.ID,
 			"minio_path":      photo.MinioPath,
@@ -1768,6 +1910,9 @@ func main() {
 			"api_key":         config.APIKey,
 			"model_name":      config.ModelName,
 			"prompt_language": promptLang,
+		}
+		if traceparent != "" {
+			taskData["traceparent"] = traceparent
 		}
 		err := queue.PushTask("ai_analysis_queue", taskData)
 		if err != nil {
@@ -1847,7 +1992,11 @@ func main() {
 		if inferPromptLang == "" {
 			inferPromptLang = "en"
 		}
-		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName, inferPromptLang); err != nil {
+		traceparent := c.Get("Traceparent")
+		if traceparent == "" {
+			traceparent = c.Get("traceparent")
+		}
+		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName, inferPromptLang, traceparent); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue parameter inference task"})
 		}
 
@@ -2328,7 +2477,11 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create export job"})
 		}
 
-		if err := queue.PublishExportTask(job.ID, uint(photoID), string(optsRaw)); err != nil {
+		traceparent := c.Get("Traceparent")
+		if traceparent == "" {
+			traceparent = c.Get("traceparent")
+		}
+		if err := queue.PublishExportTask(job.ID, uint(photoID), string(optsRaw), traceparent); err != nil {
 			// Mark job as failed if we can't queue it
 			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue export task"})
@@ -3883,7 +4036,11 @@ func main() {
 			if err := database.DB.Create(&job).Error; err != nil {
 				continue
 			}
-			if err := queue.PublishExportTask(job.ID, photo.ID, optsJSON); err != nil {
+			traceparent := c.Get("Traceparent")
+			if traceparent == "" {
+				traceparent = c.Get("traceparent")
+			}
+			if err := queue.PublishExportTask(job.ID, photo.ID, optsJSON, traceparent); err != nil {
 				database.DB.Model(&job).Update("status", "failed")
 				continue
 			}
@@ -4176,7 +4333,11 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create export job"})
 		}
 
-		if err := queue.PublishAlbumExportTask(job.ID, uint(albumID), string(optsRaw)); err != nil {
+		traceparent := c.Get("Traceparent")
+		if traceparent == "" {
+			traceparent = c.Get("traceparent")
+		}
+		if err := queue.PublishAlbumExportTask(job.ID, uint(albumID), string(optsRaw), traceparent); err != nil {
 			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to queue export task"})
 		}
@@ -5568,8 +5729,40 @@ func main() {
 		return c.JSON(fiber.Map{"updated": res.RowsAffected})
 	})
 
-	fmt.Println("Starting Go Core API on :8080...")
-	if err := app.Listen(":8080"); err != nil {
-		log.Fatal(err)
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-shutdownCtx.Done()
+		logger.Info("shutdown signal received")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := app.ShutdownWithContext(ctx); err != nil {
+			logger.Error("fiber shutdown failed", "error", err)
+		}
+		if tracerShutdown != nil {
+			if err := tracerShutdown(ctx); err != nil {
+				logger.Error("tracer shutdown failed", "error", err)
+			}
+		}
+		if queue.RedisClient != nil {
+			if err := queue.RedisClient.Close(); err != nil {
+				logger.Error("redis shutdown failed", "error", err)
+			}
+		}
+		if sqlDB, err := database.DB.DB(); err == nil {
+			if err := sqlDB.Close(); err != nil {
+				logger.Error("database shutdown failed", "error", err)
+			}
+		}
+		logger.Info("shutdown complete")
+	}()
+
+	logger.Info("starting Go Core API", "addr", ":8080")
+	if err := app.Listen(":8080"); err != nil && err != http.ErrServerClosed {
+		logger.Error("server exited with error", "error", err)
+		os.Exit(1)
 	}
 }

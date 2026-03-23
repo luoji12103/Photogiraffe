@@ -56,10 +56,17 @@ services:
       - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
       - JWT_SECRET=${JWT_SECRET:-photogiraffe_jwt_secret_change_me_in_prod}
       - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
     depends_on:
       - postgres
       - redis
       - minio
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   python-worker:
@@ -76,6 +83,12 @@ services:
     depends_on:
       - redis
       - minio
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,redis; r=redis.Redis(host=os.getenv('REDIS_HOST','redis'), port=6379, password=os.getenv('REDIS_PASSWORD','redispass')); r.ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     volumes:
       - python-worker-cache:/root/.cache
     restart: unless-stopped
@@ -109,6 +122,29 @@ services:
     depends_on:
       - frontend
       - go-core
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: photogiraffe-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./outline/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - go-core
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: photogiraffe-jaeger
+    ports:
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
 
 volumes:

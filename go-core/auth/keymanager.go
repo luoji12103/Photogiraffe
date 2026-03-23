@@ -164,7 +164,22 @@ func GetJWKS(kid string) (map[string]any, error) {
 func LoadDBKeys(keys []DBKey) {
 	dbKeysMux.Lock()
 	defer dbKeysMux.Unlock()
-	dbKeys = keys
+	if len(keys) == 0 {
+		return
+	}
+
+	merged := make(map[string]DBKey, len(dbKeys)+len(keys))
+	for _, key := range dbKeys {
+		merged[key.KeyID] = key
+	}
+	for _, key := range keys {
+		merged[key.KeyID] = key
+	}
+
+	dbKeys = dbKeys[:0]
+	for _, key := range merged {
+		dbKeys = append(dbKeys, key)
+	}
 }
 
 func GetActiveDBKey() (*DBKey, error) {
@@ -172,10 +187,17 @@ func GetActiveDBKey() (*DBKey, error) {
 	defer dbKeysMux.RUnlock()
 
 	now := time.Now()
+	var newest *DBKey
 	for i := range dbKeys {
-		if now.Before(dbKeys[i].ExpiresAt) {
-			return &dbKeys[i], nil
+		if !now.Before(dbKeys[i].ExpiresAt) {
+			continue
 		}
+		if newest == nil || dbKeys[i].ExpiresAt.After(newest.ExpiresAt) {
+			newest = &dbKeys[i]
+		}
+	}
+	if newest != nil {
+		return newest, nil
 	}
 	return nil, fmt.Errorf("no active signing key found")
 }

@@ -240,7 +240,7 @@ def init_minio():
         secure=False
     )
 
-def process_image(minio_client, photo_id, minio_path):
+def process_image(minio_client, photo_id, minio_path, traceparent=""):
     bucket_name = "photos"
     try:
         # 1. Download original image
@@ -397,7 +397,10 @@ def process_image(minio_client, photo_id, minio_path):
         payload = {"status": "completed"}
         if exif_data:
             payload["exif_data"] = exif_data
-        res = requests.put(update_url, json=payload, headers={"X-Internal-Secret": INTERNAL_SECRET})
+        headers = {"X-Internal-Secret": INTERNAL_SECRET}
+        if traceparent:
+            headers["traceparent"] = traceparent
+        res = requests.put(update_url, json=payload, headers=headers)
         res.raise_for_status()
 
         # 5. Phase 16 — Extract dominant colours from thumbnail and push to Go Core
@@ -406,8 +409,11 @@ def process_image(minio_client, photo_id, minio_path):
             if colors:
                 colors_json = json.dumps(colors)
                 dc_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/dominant-colors"
+                headers = {"X-Internal-Secret": INTERNAL_SECRET}
+                if traceparent:
+                    headers["traceparent"] = traceparent
                 requests.put(dc_url, json={"dominant_colors": colors_json},
-                             headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=8)
+                             headers=headers, timeout=8)
                 logger.info(f"[colors] photo {photo_id} → {[c['bucket'] for c in colors]}")
         except Exception as ce:
             logger.debug(f"[colors] push failed (non-fatal): {ce}")
@@ -420,7 +426,10 @@ def process_image(minio_client, photo_id, minio_path):
         # Try to update status to failed
         try:
             update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/status"
-            requests.put(update_url, json={"status": "failed"}, headers={"X-Internal-Secret": INTERNAL_SECRET})
+            headers = {"X-Internal-Secret": INTERNAL_SECRET}
+            if traceparent:
+                headers["traceparent"] = traceparent
+            requests.put(update_url, json={"status": "failed"}, headers=headers)
         except Exception as inner_e:
             logger.error(f"Failed to update status to failed: {inner_e}")
         return False
@@ -544,7 +553,7 @@ def _call_zhipu(base64_image: str, api_key: str, model_name: str, prompt: str = 
     return response.choices[0].message.content
 
 
-def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url="", prompt_language="en"):
+def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url="", prompt_language="en", traceparent=""):
     bucket_name = "photos"
     # Normalise provider; fall back to openai_compatible for legacy records
     if not provider:
@@ -590,7 +599,10 @@ def process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, m
 
         # 4. Update result in Go Core API
         update_url = f"{GO_CORE_URL}/internal/photos/{photo_id}/analysis"
-        res = requests.put(update_url, json={"analysis": analysis_result}, headers={"X-Internal-Secret": INTERNAL_SECRET})
+        headers = {"X-Internal-Secret": INTERNAL_SECRET}
+        if traceparent:
+            headers["traceparent"] = traceparent
+        res = requests.put(update_url, json={"analysis": analysis_result}, headers=headers)
         res.raise_for_status()
 
         logger.info(f"Successfully saved AI analysis for photo {photo_id}")
@@ -1117,7 +1129,7 @@ def _render_frame(
 
 # ─── Phase 14 album export ────────────────────────────────────────────────────
 
-def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str) -> bool:
+def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str, traceparent: str = "") -> bool:
     """Phase 14: export all photos in an album as ZIP or PDF."""
     opts: dict = {}
     try:
@@ -1134,7 +1146,7 @@ def process_album_export(minio_client, job_id: str, album_id: str, opts_json: st
     logger.info(f"[album-export:{job_id}] album={album_id} fmt={fmt} spec={print_spec}")
 
     try:
-        _update_export_status(job_id, "processing")
+        _update_export_status(job_id, "processing", traceparent=traceparent)
 
         # 1. Fetch photo list from internal endpoint
         res = requests.get(
@@ -1161,13 +1173,13 @@ def process_album_export(minio_client, job_id: str, album_id: str, opts_json: st
                 quality, print_spec, bucket
             )
 
-        _update_export_status(job_id, "completed", output_path=output_path)
+        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent)
         logger.info(f"[album-export:{job_id}] done → {output_path}")
         return True
 
     except Exception as e:
         logger.error(f"[album-export:{job_id}] failed: {e}", exc_info=True)
-        _update_export_status(job_id, "failed", error_message=str(e))
+        _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
         return False
 
 
@@ -1296,7 +1308,7 @@ def _album_to_pdf(minio_client, job_id, album_id, album_name, photos, quality, p
     return output_path
 
 
-def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str) -> bool:
+def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str, traceparent: str = "") -> bool:
     """
     Export pipeline:
       download → decode → adjust → resize → watermark → EXIF → upload → notify
@@ -1315,7 +1327,7 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         embed_exif = bool(opts.get("embed_exif", True))
 
         # Mark job as processing
-        _update_export_status(job_id, "processing")
+        _update_export_status(job_id, "processing", traceparent=traceparent)
 
         # 1. Fetch photo record from Go Core via internal endpoint (X-Internal-Secret, no JWT needed)
         photo_meta = _fetch_photo_meta(photo_id)
@@ -1451,12 +1463,12 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         logger.info(f"[export:{job_id}] Uploaded {output_path} ({out_size} bytes)")
 
         # 8. Notify Go Core of completion
-        _update_export_status(job_id, "completed", output_path=output_path)
+        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent)
         return True
 
     except Exception as e:
         logger.error(f"[export:{job_id}] Export failed: {e}", exc_info=True)
-        _update_export_status(job_id, "failed", error_message=str(e))
+        _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
         return False
 
 
@@ -1510,7 +1522,7 @@ def _call_anthropic_infer(base64_image: str, api_key: str, model_name: str, prom
 
 def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
                                provider: str, api_key: str, model_name: str,
-                               base_url: str = "", prompt_language: str = "en") -> bool:
+                               base_url: str = "", prompt_language: str = "en", traceparent: str = "") -> bool:
     """Analyse a photo via LLM and save suggested adjustment params to DB."""
     bucket_name = "photos"
     if not provider:
@@ -1551,8 +1563,11 @@ def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
 
         result_json = json.dumps(parsed)
         url = f"{GO_CORE_URL}/internal/photos/{photo_id}/inferred-params"
+        headers = {"X-Internal-Secret": INTERNAL_SECRET}
+        if traceparent:
+            headers["traceparent"] = traceparent
         res = requests.put(url, json={"inferred_params": result_json},
-                           headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=10)
+                           headers=headers, timeout=10)
         res.raise_for_status()
         logger.info(f"[infer:{photo_id}] Saved inferred params: {result_json}")
         return True
@@ -1562,7 +1577,7 @@ def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
 
 
 def _update_export_status(job_id: str, status: str,
-                          output_path: str = "", error_message: str = "") -> None:
+                          output_path: str = "", error_message: str = "", traceparent: str = "") -> None:
     url = f"{GO_CORE_URL}/internal/exports/{job_id}/status"
     payload = {"status": status}
     if output_path:
@@ -1570,8 +1585,11 @@ def _update_export_status(job_id: str, status: str,
     if error_message:
         payload["error_message"] = error_message
     try:
+        headers = {"X-Internal-Secret": INTERNAL_SECRET}
+        if traceparent:
+            headers["traceparent"] = traceparent
         res = requests.put(url, json=payload,
-                           headers={"X-Internal-Secret": INTERNAL_SECRET}, timeout=10)
+                           headers=headers, timeout=10)
         res.raise_for_status()
     except Exception as e:
         logger.warning(f"[export:{job_id}] Failed to update status to {status}: {e}")
@@ -1603,9 +1621,10 @@ def worker_process(worker_id):
                     if stream == STREAM_NAME:
                         photo_id = message_data.get("photo_id")
                         minio_path = message_data.get("minio_path")
+                        traceparent = message_data.get("traceparent", "")
                         
                         if photo_id and minio_path:
-                            success = process_image(minio_client, photo_id, minio_path)
+                            success = process_image(minio_client, photo_id, minio_path, traceparent)
                             if success:
                                 r.xack(STREAM_NAME, GROUP_NAME, message_id)
                         else:
@@ -1619,9 +1638,10 @@ def worker_process(worker_id):
                         api_key = message_data.get("api_key")
                         model_name = message_data.get("model_name")
                         prompt_language = message_data.get("prompt_language", "en")
+                        traceparent = message_data.get("traceparent", "")
 
                         if photo_id and minio_path and api_key and model_name:
-                            success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language)
+                            success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language, traceparent)
                             if success:
                                 r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
                         else:
@@ -1633,11 +1653,12 @@ def worker_process(worker_id):
                         album_id  = message_data.get("album_id")
                         task_type = message_data.get("type", "photo_export")
                         opts_json = message_data.get("export_options", "{}")
+                        traceparent = message_data.get("traceparent", "")
 
                         if job_id and task_type == "album_export" and album_id:
-                            success = process_album_export(minio_client, job_id, album_id, opts_json)
+                            success = process_album_export(minio_client, job_id, album_id, opts_json, traceparent)
                         elif job_id and photo_id:
-                            success = process_export_task(minio_client, job_id, photo_id, opts_json)
+                            success = process_export_task(minio_client, job_id, photo_id, opts_json, traceparent)
                         else:
                             success = True
 
@@ -1651,10 +1672,11 @@ def worker_process(worker_id):
                         api_key    = message_data.get("api_key")
                         model_name = message_data.get("model_name")
                         prompt_language = message_data.get("prompt_language", "en")
+                        traceparent = message_data.get("traceparent", "")
 
                         if photo_id and minio_path and api_key and model_name:
                             process_infer_params_task(minio_client, photo_id, minio_path,
-                                                      provider, api_key, model_name, base_url, prompt_language)
+                                                      provider, api_key, model_name, base_url, prompt_language, traceparent)
 
                         r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
 
