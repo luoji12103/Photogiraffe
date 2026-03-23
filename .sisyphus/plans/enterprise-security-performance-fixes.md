@@ -1184,7 +1184,7 @@ Max Concurrent: 5 (Waves 1-4)
   - Message: `security(rate-limit): add rate limiting to all endpoints`
   - Files: `go-core/main.go`, `go-core/go.mod`
 
-- [ ] 19. Implement Secrets Rotation
+- [x] 19. Implement Secrets Rotation
 
   **What to do**:
   - Add support for multiple active JWT signing keys (key versioning)
