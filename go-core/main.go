@@ -46,7 +46,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -560,7 +560,7 @@ func main() {
 	}))
 
 	app.Use(limiter.New(limiter.Config{
-		Max:        60,
+		Max:        600,
 		Expiration: 1 * time.Minute,
 		Storage:    limiter.ConfigDefault.Storage,
 		KeyGenerator: func(c *fiber.Ctx) string {
@@ -4674,10 +4674,10 @@ func main() {
 			query = query.Where("NULLIF(regexp_replace(exif_data.iso, '[^0-9]', '', 'g'), '')::BIGINT <= ?", isoMax)
 		}
 		if dateFrom != "" {
-			query = query.Where("photos.uploaded_at >= ?", dateFrom)
+			query = query.Where("photos.uploaded_at >= ?::date", dateFrom)
 		}
 		if dateTo != "" {
-			query = query.Where("photos.uploaded_at <= (? || ' 23:59:59')", dateTo)
+			query = query.Where("photos.uploaded_at < (?::date + INTERVAL '1 day')", dateTo)
 		}
 		// GPS bounding box approximation
 		if latStr != "" && lngStr != "" && radiusKmStr != "" {
@@ -4765,7 +4765,7 @@ func main() {
 			Date  string `json:"date"`
 			Count int64  `json:"count"`
 		}
-		var recentUploads []DayCount
+		recentUploads := make([]DayCount, 0)
 		recentQuery := database.DB.Model(&models.Photo{}).
 			Select("TO_CHAR(uploaded_at, 'YYYY-MM-DD') as date, COUNT(*) as count").
 			Where("uploaded_at >= NOW() - INTERVAL '14 days'")
@@ -4779,7 +4779,7 @@ func main() {
 			Name  string `json:"name"`
 			Count int64  `json:"count"`
 		}
-		var topCameras []NameCount
+		topCameras := make([]NameCount, 0)
 		topCameraQuery := database.DB.Model(&models.ExifData{}).
 			Select("exif_data.camera_model as name, COUNT(*) as count").
 			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").
@@ -4790,7 +4790,7 @@ func main() {
 		topCameraQuery.Group("exif_data.camera_model").Order("count DESC").Limit(8).Scan(&topCameras)
 
 		// Top lenses
-		var topLenses []NameCount
+		topLenses := make([]NameCount, 0)
 		topLensQuery := database.DB.Model(&models.ExifData{}).
 			Select("exif_data.lens_model as name, COUNT(*) as count").
 			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").
@@ -4801,7 +4801,7 @@ func main() {
 		topLensQuery.Group("exif_data.lens_model").Order("count DESC").Limit(8).Scan(&topLenses)
 
 		// Color space distribution
-		var colorSpaces []NameCount
+		colorSpaces := make([]NameCount, 0)
 		colorSpaceQuery := database.DB.Model(&models.ExifData{}).
 			Select("exif_data.color_space as name, COUNT(*) as count").
 			Joins("JOIN photos ON photos.id = exif_data.photo_id AND photos.deleted_at IS NULL").

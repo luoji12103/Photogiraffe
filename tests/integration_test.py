@@ -298,6 +298,9 @@ def test_presets(token):
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Authorization": f"Bearer {token}",
     }
+    if csrf_token:
+        headers_extra["X-Csrf-Token"] = csrf_token
+        headers_extra["Cookie"] = f"__Host-csrf_={csrf_token}"
     req = urllib.request.Request(
         BASE_URL + f"/api/presets/{preset_id}/file",
         data=form_body,
@@ -688,13 +691,17 @@ def test_phase10(token):
         xmp_content + b"\r\n"
         b"--" + boundary + b"--\r\n"
     )
+    xmp_headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
+    }
+    if csrf_token:
+        xmp_headers["X-Csrf-Token"] = csrf_token
+        xmp_headers["Cookie"] = f"__Host-csrf_={csrf_token}"
     form_req = urllib.request.Request(
         BASE_URL + "/api/presets/parse-xmp",
         data=body_parts,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
-        },
+        headers=xmp_headers,
         method="POST",
     )
     try:

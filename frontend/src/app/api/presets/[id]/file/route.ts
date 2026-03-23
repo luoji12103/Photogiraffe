@@ -21,9 +21,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   try {
     const formData = await request.formData();
+    const csrfToken = request.headers.get("x-csrf-token") || "";
+    const cookie = request.headers.get("cookie") || "";
     const res = await fetch(`${API}/api/presets/${id}/file`, {
       method: "POST",
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: {
+        Authorization: request.headers.get("Authorization") || "",
+        ...(csrfToken ? { "X-Csrf-Token": csrfToken } : {}),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
       body: formData,
     });
     const data = await res.json();
