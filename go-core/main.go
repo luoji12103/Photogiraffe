@@ -2325,8 +2325,11 @@ func main() {
 		if result := q.First(&photo); result.Error != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "photo not found"})
 		}
-		pid := uint(presetID)
-		photo.AppliedPresetID = &pid
+		if presetID < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid preset id"})
+		}
+		presetIDUint := uint(presetID)
+		photo.AppliedPresetID = &presetIDUint
 		database.DB.Save(&photo)
 		return c.JSON(fiber.Map{"message": "preset applied", "preset_id": presetID, "photo_id": photoID})
 	})
@@ -2467,8 +2470,12 @@ func main() {
 		}
 		optsRaw, _ = json.Marshal(optMap)
 
+		if photoID < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		photoIDUint := uint(photoID)
 		job := models.ExportJob{
-			PhotoID:       uint(photoID),
+			PhotoID:       photoIDUint,
 			UserID:        uid,
 			Status:        "pending",
 			ExportOptions: string(optsRaw),
@@ -2481,7 +2488,7 @@ func main() {
 		if traceparent == "" {
 			traceparent = c.Get("traceparent")
 		}
-		if err := queue.PublishExportTask(job.ID, uint(photoID), string(optsRaw), traceparent); err != nil {
+		if err := queue.PublishExportTask(job.ID, photoIDUint, string(optsRaw), traceparent); err != nil {
 			// Mark job as failed if we can't queue it
 			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue export task"})
@@ -3651,8 +3658,12 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 		}
 
+		if photoID < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid photo id"})
+		}
+		photoIDUint := uint(photoID)
 		sl := models.ShareLink{
-			PhotoID:   uint(photoID),
+			PhotoID:   photoIDUint,
 			UserID:    uid,
 			Token:     token,
 			IsRevoked: false,
@@ -4320,6 +4331,9 @@ func main() {
 		}
 		optsRaw, _ := json.Marshal(optsMap)
 
+		if albumID < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid album id"})
+		}
 		albumIDUint := uint(albumID)
 		job := models.ExportJob{
 			PhotoID:       0, // not a single photo
@@ -4337,7 +4351,7 @@ func main() {
 		if traceparent == "" {
 			traceparent = c.Get("traceparent")
 		}
-		if err := queue.PublishAlbumExportTask(job.ID, uint(albumID), string(optsRaw), traceparent); err != nil {
+		if err := queue.PublishAlbumExportTask(job.ID, albumIDUint, string(optsRaw), traceparent); err != nil {
 			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to queue export task"})
 		}
@@ -4366,6 +4380,9 @@ func main() {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
 
+		if albumID < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid album id"})
+		}
 		albumIDUint := uint(albumID)
 		var jobs []models.ExportJob
 		database.DB.Where("album_id = ? AND user_id = ?", albumIDUint, uid).
