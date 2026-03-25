@@ -1,0 +1,288 @@
+file_path,category,purpose,risk_tags
+.env,configuration/deployment,Local runtime secrets and service credentials,secret-exposure;weak-defaults
+.env.example,configuration/deployment,Environment template for deployment setup,misconfiguration
+.gitignore,project-meta,Repository supporting file,low
+.vscode/settings.json,project-meta,Repository supporting file,low
+LICENSE,project-meta,Repository supporting file,low
+README.md,project-meta,Product and deployment documentation,doc-drift
+docker-compose.yml,configuration/deployment,Local multi-service topology and env wiring,network-exposure;default-credential
+frontend/.dockerignore,frontend-asset,Repository supporting file,low
+frontend/.gitignore,frontend-asset,Repository supporting file,low
+frontend/Dockerfile,configuration/deployment,Repository supporting file,low
+frontend/README.md,frontend-asset,Repository supporting file,low
+frontend/eslint.config.mjs,frontend-config,Repository supporting file,low
+frontend/next.config.ts,frontend-code,Repository supporting file,low
+frontend/package-lock.json,frontend-config,Repository supporting file,low
+frontend/package.json,frontend-config,Repository supporting file,low
+frontend/postcss.config.mjs,frontend-config,Repository supporting file,low
+frontend/public/file.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/globe.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/icons/icon.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/manifest.json,frontend-config,Frontend static assets / PWA files,stale-cache
+frontend/public/next.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/offline.html,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/sw.js,frontend-code,Frontend static assets / PWA files,stale-cache
+frontend/public/vercel.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/public/window.svg,frontend-asset,Frontend static assets / PWA files,stale-cache
+frontend/src/app/@modal/(.)photo/[id]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/@modal/default.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/admin/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/albums/[id]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/albums/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/analytics/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/ai-rate-limits/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/ai-rate-limits/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/flags/[name]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/flags/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/invite-codes/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/smtp/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/smtp/test/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/users/[id]/quota/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/admin/users/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/[id]/export/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/[id]/photos/[photo_id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/[id]/photos/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/[id]/share/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/albums/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/analytics/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/change-password/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/forgot-password/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/login-history/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/login/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/logout/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/me/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/refresh/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/register/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/reset-password/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/auth/update-profile/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/backup/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/backup/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/config/ai/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/events/stream/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/exports/[job_id]/download/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/exports/[job_id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/exports/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/feature/[name]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/image/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/notifications/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/notifications/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/analyze/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/auto-tag/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/color-label/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/description/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/export/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/favorite/count/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/favorite/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/infer-params/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/iptc/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/metadata/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/notes/[noteId]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/notes/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/rating/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/share/[token]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/share/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/[id]/visibility/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/batch-date-shift/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/batch-delete/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/batch-export/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/bulk-album/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/bulk-delete/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/bulk/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/duplicates/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/favorites/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/map/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/search/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/tags/autocomplete/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/photos/timeline/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/presets/[id]/apply/[photo_id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/presets/[id]/file/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/presets/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/presets/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/profile/avatar/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/profile/overlays/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/profile/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/profile/signature/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/public/profile/[username]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/saved-searches/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/saved-searches/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/share/[token]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/share/album/[token]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/smart-albums/[id]/photos/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/smart-albums/[id]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/smart-albums/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/stats/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/storage/usage/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/tags/[name]/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/tags/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/api/upload/route.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/backup/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/compare/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/dashboard/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/duplicates/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/exports/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/favicon.ico,frontend-asset,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/favorites/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/forgot-password/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/globals.css,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/layout.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/login/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/map/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/notifications/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/p/[username]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/photo/[id]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/profile/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/register/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/reset-password/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/search/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/settings/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/share/[token]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/share/album/[token]/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/smart-albums/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/app/timeline/page.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/AddToAlbumModal.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/AdjustPanel.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/AuthGuard.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/BatchActionBar.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/BulkActionBar.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/ClientLayout.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/ColorSpaceIndicator.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/CompareView.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/ExportPanel.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/GLCanvas.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/IPTCPanel.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/InstallPrompt.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/MiniMapLeaflet.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/PhotoDetail.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/PhotoGrid.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/PhotoMapLeaflet.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/PhotoNotes.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/PresetPanel.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/RawCanvas.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/SSEListener.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/ServiceWorkerRegistrar.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/SlideshowModal.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/ToastContainer.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/components/UploadPanel.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/context/AuthContext.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/context/ThemeContext.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/context/ToastContext.tsx,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/lib/display-detect.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/lib/gl-renderer.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/lib/gpsUtils.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/lib/useRawDecoder.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/src/types/vendor.d.ts,frontend-code,Frontend UI and API integration logic,xss;auth-state
+frontend/tsconfig.json,frontend-config,Repository supporting file,low
+go-core/Dockerfile,configuration/deployment,Repository supporting file,low
+go-core/auth/jwt.go,backend-code,JWT access/refresh token primitives,auth-security
+go-core/auth/jwt_test.go,backend-code,Repository supporting file,low
+go-core/database/db.go,backend-code,PostgreSQL connection and schema migration,migration-risk
+go-core/go.mod,backend-config,Repository supporting file,low
+go-core/go.sum,backend-config,Repository supporting file,low
+go-core/main.go,backend-code,"Monolithic API server routes, auth, business flows",single-file-hotspot;authorization-regression
+go-core/main_test.go,backend-code,Repository supporting file,low
+go-core/models/models.go,backend-code,Domain data models and persistence schema,schema-coupling
+go-core/queue/redis.go,backend-code,Redis stream publish helper for async tasks,queue-reliability
+go-core/storage/minio.go,backend-code,MinIO client init and bucket bootstrap,storage-misconfig
+log/20260220_100000_v1.0.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_101500_v1.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_103000_v1.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_110000_v1.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_113000_v1.4.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_120000_v2.0.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260220_121500_v2.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_090000_v2.1_debug6.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_100000_v2.1_debug.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_110000_v2.1_debug2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_113000_v2.1_debug3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_120000_v2.1_debug4.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_123000_v2.1_debug5.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_130000_v2.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_143000_v2.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_170000_v2.3_debug.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_180000_v2.4.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260221_180000_v3.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_075854_v5.0.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_081500_v5.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_094000_v5.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_100000_v3.0.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_110000_v3.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_120000_v3.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_130000_v4.0.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_140000_v4.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_150000_v4.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_160000_v6.1.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260222_163000_v6.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260223_102900_v6.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260223_104500_v6.4.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260223_110000_v6.5.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260224_100000_v7.2.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260224_113000_v7.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260224_130000_v7.4.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260224_150000_v7.5.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260224_160000_v8.1_v8.3.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260225_021623_v8_debug_upload.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260225_100000_v12.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260225_140000_v13.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260225_180000_v14.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260225_220000_v15.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260226_120000_v16.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260226_140000_ai_analysis_debug.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260227_100000_v18.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+log/20260303_000000_v31_v36.md,run-log,Historical run/debug logs and progress notes,sensitive-runtime-details
+nginx/nginx.conf,configuration/deployment,Repository supporting file,low
+outline/InitialThoughts.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/03_Final_Implementation_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/04_Phase1_Step1_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/05_Phase1_Step2_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/06_Phase1_Step3_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/07_Phase1_Step4_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/08_Phase1_Step5_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/09_Phase2_to_5_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/10_Phase2_Step1_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/11_Phase2_Step2_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/12_Phase2_Step3_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/13_Phase2_Step4_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/14_Security_Hardening_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/15_Phase2_Completion_UploadUI_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/16_Phase3_Step1_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/17_Phase3_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/18_Phase3_Step2_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/19_Phase3_Step3_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/20_Phase3_Step4_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/21_Phase4_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/22_Phase4_Step1_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/23_Phase4_Step2_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/24_Phase4_Step3_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/25_Phase5_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/26_Phase5_Step1_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/27_Phase5_Step2_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/28_Phase5_Step3_Plan.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/29_Phase6_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/30_Phase7_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/31_Phase8_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/32_Phase9_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/33_Phase10_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/34_Phase11_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/35_Phase12_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/36_Phase13_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/37_Phase14_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/38_Phase15_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/39_Phase17_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/40_VersionConvention.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/41_Phase19_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/42_Phase20_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/43_Phase21_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/44_Phase22_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/45_Phase23_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/46_Phase24_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/47_Phase31_36_Roadmap.md,design-doc,Architecture and phased implementation notes,outdated-design
+outline/agent/HANDOFF.md,design-doc,Architecture and phased implementation notes,outdated-design
+python-worker/Dockerfile,configuration/deployment,Repository supporting file,low
+python-worker/main.py,worker-code,"Image processing, AI/export tasks, Redis consumption loop",idempotency;retry-gap;secrets-in-queue
+python-worker/requirements.txt,worker-config,Worker Python dependency manifest,supply-chain
+test_exif.py,test,Automated verification and integration checks,test-gaps
+tests/integration_test.py,test,Automated verification and integration checks,test-gaps
