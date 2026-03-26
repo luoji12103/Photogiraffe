@@ -55,8 +55,8 @@ func asyncTaskRetryDelay(attemptCount int) time.Duration {
 		attemptCount = 1
 	}
 	shift := attemptCount - 1
-	if shift > 5 {
-		shift = 5
+	if shift > 6 {
+		shift = 6
 	}
 	delay := 15 * time.Second * time.Duration(1<<shift)
 	if delay > 15*time.Minute {
