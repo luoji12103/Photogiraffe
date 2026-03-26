@@ -175,14 +175,14 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         setStorage({
-          backend: data.Backend || "minio",
-          endpoint: data.Endpoint || "",
-          bucket: data.Bucket || "",
-          access_key: data.AccessKey || "",
-          secret_key: data.SecretKey || "",
-          root_path: data.RootPath || "",
-          use_ssl: data.UseSSL ?? true,
-          region: data.Region || "",
+          backend: data.backend || "minio",
+          endpoint: data.endpoint || "",
+          bucket: data.bucket || "",
+          access_key: data.access_key || "",
+          secret_key: data.secret_key || "",
+          root_path: data.root_path || "",
+          use_ssl: data.use_ssl ?? true,
+          region: data.region || "",
         });
       }
     } catch (e) { console.error(e); }

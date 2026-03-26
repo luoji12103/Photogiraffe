@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Loader2, Users, ToggleLeft, ToggleRight, Shield,
   CircleCheck, CircleX, KeyRound, Plus, Copy, Check,
-  BarChart2, Trash2, UserCog, ImageIcon, ChevronDown, Gauge,
+  BarChart2, Trash2, UserCog, ImageIcon, ChevronDown, Gauge, RefreshCw,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
@@ -37,7 +37,21 @@ interface StatsData {
   top_users: { username: string; photo_count: number }[];
 }
 
-type Tab = "stats" | "flags" | "users" | "invites" | "ratelimits";
+type Tab = "stats" | "flags" | "users" | "invites" | "ratelimits" | "jobs";
+
+interface AsyncTask {
+  ID: number;
+  TaskType: string;
+  ResourceType: string;
+  ResourceID: number;
+  Status: string;
+  AttemptCount: number;
+  MaxAttempts: number;
+  LastError: string;
+  NextAttemptAt: string | null;
+  LeaseExpiresAt: string | null;
+  CreatedAt: string;
+}
 
 interface AIRateLimit {
   ID: number;
@@ -104,6 +118,15 @@ export default function AdminPage() {
   const [rlForm, setRlForm] = useState({ targetType: "all", targetUserId: "", window: "minute", maxRequests: "10", note: "", enabled: true });
   const [rlCreating, setRlCreating] = useState(false);
 
+  // Async jobs state
+  const [jobs, setJobs] = useState<AsyncTask[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [jobsTotal, setJobsTotal] = useState(0);
+  const [jobStatusFilter, setJobStatusFilter] = useState("");
+  const [jobTypeFilter, setJobTypeFilter] = useState("");
+  const [retryingJob, setRetryingJob] = useState<number | null>(null);
+  const [jobMsg, setJobMsg] = useState("");
+
   const loadStats = useCallback(() => {
     setStatsLoading(true);
     authFetch("/api/admin/stats")
@@ -144,11 +167,27 @@ export default function AdminPage() {
       .finally(() => setRlLoading(false));
   }, [authFetch]);
 
+  const loadJobs = useCallback(() => {
+    setJobsLoading(true);
+    const params = new URLSearchParams({ limit: "50" });
+    if (jobStatusFilter) params.set("status", jobStatusFilter);
+    if (jobTypeFilter) params.set("task_type", jobTypeFilter);
+
+    authFetch(`/api/admin/jobs?${params.toString()}`)
+      .then((r) => r.ok ? r.json() : { jobs: [], total: 0 })
+      .then((data) => {
+        setJobs(Array.isArray(data.jobs) ? data.jobs : []);
+        setJobsTotal(typeof data.total === "number" ? data.total : 0);
+      })
+      .finally(() => setJobsLoading(false));
+  }, [authFetch, jobStatusFilter, jobTypeFilter]);
+
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { if (tab === "flags") loadFlags(); }, [tab, loadFlags]);
   useEffect(() => { if (tab === "users") loadUsers(); }, [tab, loadUsers]);
   useEffect(() => { if (tab === "invites") loadInviteCodes(); }, [tab, loadInviteCodes]);
   useEffect(() => { if (tab === "ratelimits") loadRateLimits(); }, [tab, loadRateLimits]);
+  useEffect(() => { if (tab === "jobs") loadJobs(); }, [tab, loadJobs]);
 
   const handleCreateRateLimit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,6 +242,25 @@ export default function AdminPage() {
       setRateLimits((prev) => prev.filter((r) => r.ID !== id));
       setRlMsg("规则已删除");
       setTimeout(() => setRlMsg(""), 3000);
+    }
+  };
+
+  const handleRetryJob = async (jobId: number) => {
+    if (!confirm(`确定重试任务 #${jobId} 吗？`)) return;
+    setRetryingJob(jobId);
+    setJobMsg("");
+    try {
+      const res = await authFetch(`/api/admin/jobs/${jobId}/retry`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok || res.status === 202) {
+        setJobMsg(data.warning || "任务已重新加入队列");
+        setTimeout(() => setJobMsg(""), 4000);
+        loadJobs();
+      } else {
+        setJobMsg(data.error || "重试失败");
+      }
+    } finally {
+      setRetryingJob(null);
     }
   };
 
@@ -286,6 +344,7 @@ export default function AdminPage() {
     { key: "users", label: "用户管理", icon: <Users size={16} /> },
     { key: "invites", label: "邀请码", icon: <KeyRound size={16} /> },
     { key: "ratelimits", label: "AI 限速", icon: <Gauge size={16} /> },
+    { key: "jobs", label: "异步任务", icon: <RefreshCw size={16} /> },
   ];
 
   return (
@@ -540,7 +599,7 @@ export default function AdminPage() {
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                 <p className="text-sm text-zinc-500">
-                  单次使用邀请码，供新用户注册（需启用"require_invite"功能开关）
+                  单次使用邀请码，供新用户注册（需启用 &quot;require_invite&quot; 功能开关）
                 </p>
                 <button
                   onClick={handleCreateInvite}
@@ -558,7 +617,7 @@ export default function AdminPage() {
                 </div>
               ) : inviteCodes.length === 0 ? (
                 <div className="text-center py-16 text-zinc-600">
-                  暂无邀请码，点击"生成邀请码"创建
+                  暂无邀请码，点击 &quot;生成邀请码&quot; 创建
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -778,6 +837,155 @@ export default function AdminPage() {
                           </tr>
                         );
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Async Jobs Tab */}
+          {tab === "jobs" && (
+            <div className="space-y-6">
+              {jobMsg && (
+                <div className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-sm">
+                  {jobMsg}
+                </div>
+              )}
+
+              <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">异步任务控制台</h3>
+                    <p className="text-sm text-zinc-500 mt-1">查看重试、死信和租约回收状态。当前共 {jobsTotal} 条任务记录。</p>
+                  </div>
+                  <button
+                    onClick={loadJobs}
+                    disabled={jobsLoading}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {jobsLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    刷新
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-zinc-500">状态筛选</span>
+                    <select
+                      value={jobStatusFilter}
+                      onChange={(e) => setJobStatusFilter(e.target.value)}
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    >
+                      <option value="">全部状态</option>
+                      <option value="pending">pending</option>
+                      <option value="processing">processing</option>
+                      <option value="retry_scheduled">retry_scheduled</option>
+                      <option value="completed">completed</option>
+                      <option value="dead_letter">dead_letter</option>
+                      <option value="cancelled">cancelled</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-zinc-500">任务类型</span>
+                    <select
+                      value={jobTypeFilter}
+                      onChange={(e) => setJobTypeFilter(e.target.value)}
+                      className="text-sm bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg px-3 py-2"
+                    >
+                      <option value="">全部任务</option>
+                      <option value="image_processing">image_processing</option>
+                      <option value="ai_analysis">ai_analysis</option>
+                      <option value="infer_params">infer_params</option>
+                      <option value="auto_tag">auto_tag</option>
+                      <option value="export_photo">export_photo</option>
+                      <option value="export_album">export_album</option>
+                      <option value="backup_export">backup_export</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {jobsLoading ? (
+                <div className="flex justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+                </div>
+              ) : jobs.length === 0 ? (
+                <div className="text-center py-16 text-zinc-600">
+                  当前筛选条件下没有任务记录
+                </div>
+              ) : (
+                <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
+                  <table className="w-full text-sm min-w-[920px]">
+                    <thead>
+                      <tr className="border-b border-zinc-800 bg-zinc-950/50">
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">ID</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">任务</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">资源</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">状态</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">尝试</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">下次重试 / 租约</th>
+                        <th className="text-left px-4 py-3 text-zinc-500 font-medium">错误</th>
+                        <th className="text-right px-4 py-3 text-zinc-500 font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobs.map((job) => (
+                        <tr key={job.ID} className="border-b border-zinc-800/50 last:border-0">
+                          <td className="px-4 py-3 text-zinc-500 tabular-nums">{job.ID}</td>
+                          <td className="px-4 py-3">
+                            <div className="font-medium">{job.TaskType}</div>
+                            <div className="text-xs text-zinc-500" suppressHydrationWarning>
+                              {job.CreatedAt ? new Date(job.CreatedAt).toLocaleString("zh-CN") : "—"}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-400">
+                            {job.ResourceType} #{job.ResourceID}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${
+                              job.Status === "dead_letter"
+                                ? "border-red-800/40 bg-red-900/20 text-red-300"
+                                : job.Status === "retry_scheduled"
+                                  ? "border-amber-800/40 bg-amber-900/20 text-amber-300"
+                                  : job.Status === "completed"
+                                    ? "border-green-800/40 bg-green-900/20 text-green-300"
+                                    : "border-zinc-700 bg-zinc-800 text-zinc-300"
+                            }`}>
+                              {job.Status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-400 tabular-nums">
+                            {job.AttemptCount} / {job.MaxAttempts}
+                          </td>
+                          <td className="px-4 py-3 text-zinc-500 text-xs" suppressHydrationWarning>
+                            {job.NextAttemptAt
+                              ? `重试：${new Date(job.NextAttemptAt).toLocaleString("zh-CN")}`
+                              : job.LeaseExpiresAt
+                                ? `租约：${new Date(job.LeaseExpiresAt).toLocaleString("zh-CN")}`
+                                : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-zinc-500 max-w-[280px] truncate" title={job.LastError || ""}>
+                            {job.LastError || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {job.Status === "dead_letter" ? (
+                              <button
+                                onClick={() => handleRetryJob(job.ID)}
+                                disabled={retryingJob === job.ID}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                              >
+                                {retryingJob === job.ID
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <RefreshCw className="w-3.5 h-3.5" />}
+                                重试
+                              </button>
+                            ) : (
+                              <span className="text-zinc-600 text-xs">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
