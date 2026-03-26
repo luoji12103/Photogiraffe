@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1529,17 +1530,12 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save photo metadata"})
 		}
 
-		traceparent := c.Get("Traceparent")
-		if traceparent == "" {
-			traceparent = c.Get("traceparent")
-		}
+		traceparent := requestTraceparent(c)
 
-		// Publish task to Redis Stream
-		err = queue.PublishImageProcessingTask(photo.ID, objectName, traceparent)
+		// Create a durable async task and publish it to Redis.
+		_, err = queue.EnqueueImageProcessingTask(photo.ID, objectName, traceparent)
 		if err != nil {
-			log.Printf("Failed to publish task: %v", err)
-			// We don't return an error here, as the photo is already saved and uploaded.
-			// A retry mechanism should be implemented later.
+			log.Printf("Failed to enqueue image processing task for photo %d: %v", photo.ID, err)
 		}
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -1660,7 +1656,7 @@ func main() {
 			if _, err := fmt.Sscanf(r.GPSLongitude, "%f", &lng); err != nil {
 				continue
 			}
-			thumbPath := strings.Replace(r.MinioPath, "raw/", "thumbnail/", 1)
+			thumbPath := strings.Replace(r.MinioPath, "raw/", "thumb/", 1)
 			thumbPath = thumbPath[:len(thumbPath)-len(filepath.Ext(thumbPath))] + ".webp"
 			points = append(points, MapPoint{
 				ID:               r.PhotoID,
@@ -1898,25 +1894,19 @@ func main() {
 		if promptLang == "" {
 			promptLang = "en"
 		}
-		traceparent := c.Get("Traceparent")
-		if traceparent == "" {
-			traceparent = c.Get("traceparent")
-		}
-		taskData := map[string]interface{}{
-			"photo_id":        photo.ID,
-			"minio_path":      photo.MinioPath,
-			"provider":        provider,
-			"base_url":        config.BaseURL,
-			"api_key":         config.APIKey,
-			"model_name":      config.ModelName,
-			"prompt_language": promptLang,
-		}
-		if traceparent != "" {
-			taskData["traceparent"] = traceparent
-		}
-		err := queue.PushTask("ai_analysis_queue", taskData)
+		traceparent := requestTraceparent(c)
+		_, err := queue.EnqueueAIAnalysisTask(
+			photo.ID,
+			photo.MinioPath,
+			provider,
+			config.BaseURL,
+			config.APIKey,
+			config.ModelName,
+			promptLang,
+			traceparent,
+		)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue AI analysis task"})
+			log.Printf("Failed to enqueue AI analysis task for photo %d: %v", photo.ID, err)
 		}
 
 		return c.JSON(fiber.Map{"message": "AI analysis task queued successfully"})
@@ -1992,12 +1982,9 @@ func main() {
 		if inferPromptLang == "" {
 			inferPromptLang = "en"
 		}
-		traceparent := c.Get("Traceparent")
-		if traceparent == "" {
-			traceparent = c.Get("traceparent")
-		}
-		if err := queue.PublishInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName, inferPromptLang, traceparent); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue parameter inference task"})
+		traceparent := requestTraceparent(c)
+		if _, err := queue.EnqueueInferParamsTask(photo.ID, proxyPath, provider, config.BaseURL, config.APIKey, config.ModelName, inferPromptLang, traceparent); err != nil {
+			log.Printf("Failed to enqueue parameter inference task for photo %d: %v", photo.ID, err)
 		}
 
 		return c.JSON(fiber.Map{"message": "Parameter inference task queued successfully"})
@@ -2029,10 +2016,10 @@ func main() {
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Phase 20 — CLIP Local Auto-Tag
+	// Phase 20 — Auto-Tagging
 	// ─────────────────────────────────────────────────────────────────────────
 
-	// POST /api/photos/:id/auto-tag — queue CLIP zero-shot auto-tagging for a photo
+	// POST /api/photos/:id/auto-tag — queue worker-side auto-tagging for a photo
 	app.Post("/api/photos/:id/auto-tag", requireJWT(), func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		uid := userIDFromLocals(c)
@@ -2050,12 +2037,8 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Photo processing is not complete yet"})
 		}
 
-		taskData := map[string]interface{}{
-			"photo_id":   photo.ID,
-			"minio_path": photo.MinioPath,
-		}
-		if err := queue.PushTask("auto_tag_queue", taskData); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue auto-tag task"})
+		if _, err := queue.EnqueueAutoTagTask(photo.ID, photo.MinioPath, requestTraceparent(c)); err != nil {
+			log.Printf("Failed to enqueue auto-tag task for photo %d: %v", photo.ID, err)
 		}
 		return c.JSON(fiber.Map{"message": "Auto-tag task queued successfully"})
 	})
@@ -2484,14 +2467,9 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create export job"})
 		}
 
-		traceparent := c.Get("Traceparent")
-		if traceparent == "" {
-			traceparent = c.Get("traceparent")
-		}
-		if err := queue.PublishExportTask(job.ID, photoIDUint, string(optsRaw), traceparent); err != nil {
-			// Mark job as failed if we can't queue it
-			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to queue export task"})
+		traceparent := requestTraceparent(c)
+		if _, err := queue.EnqueueExportTask(job.ID, photoIDUint, string(optsRaw), traceparent); err != nil {
+			log.Printf("Failed to enqueue export job %d: %v", job.ID, err)
 		}
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -2666,25 +2644,19 @@ func main() {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Export job not found"})
 		}
 
-		now := time.Now()
-		updates := map[string]interface{}{
-			"status":        input.Status,
-			"output_path":   input.OutputPath,
-			"error_message": input.ErrorMessage,
+		var err error
+		switch input.Status {
+		case "processing":
+			err = markExportJobProcessing(&job)
+		case "completed":
+			err = markExportJobCompleted(&job, input.OutputPath)
+		case "failed":
+			err = markExportJobFailed(&job, input.ErrorMessage)
+		default:
+			err = database.DB.Model(&job).Update("status", input.Status).Error
 		}
-		if input.Status == "completed" || input.Status == "failed" {
-			updates["completed_at"] = &now
-		}
-		database.DB.Model(&job).Updates(updates)
-
-		// Push SSE notification to the job owner
-		if input.Status == "completed" || input.Status == "failed" {
-			payload, _ := json.Marshal(map[string]interface{}{
-				"job_id":   job.ID,
-				"photo_id": job.PhotoID,
-				"status":   input.Status,
-			})
-			broadcastToUser(job.UserID, "export_"+input.Status, string(payload))
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update export job"})
 		}
 
 		return c.JSON(fiber.Map{"message": "Export job status updated"})
@@ -3327,13 +3299,7 @@ func main() {
 		if err := database.DB.Create(&job).Error; err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create backup job"})
 		}
-		// Enqueue in Redis backup_queue
-		if err := queue.PushTask("backup_queue", map[string]interface{}{
-			"job_id":  job.ID,
-			"user_id": uid,
-			"type":    "backup_export",
-		}); err != nil {
-			// Not fatal — job is created and can be retried
+		if _, err := queue.EnqueueBackupTask(job.ID, uid, requestTraceparent(c)); err != nil {
 			log.Printf("Warning: failed to enqueue backup job %d: %v", job.ID, err)
 		}
 		return c.Status(fiber.StatusCreated).JSON(job)
@@ -3390,6 +3356,18 @@ func main() {
 		if job.UserID != uid {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 		}
+		if job.Status == "pending" || job.Status == "processing" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot delete a backup job that is still running"})
+		}
+		var task models.AsyncTask
+		if err := database.DB.Where("resource_type = ? AND resource_id = ?", "backup_job", job.ID).Order("created_at desc").First(&task).Error; err == nil {
+			if task.Status == queue.AsyncTaskStatusPending || task.Status == queue.AsyncTaskStatusProcessing || task.Status == queue.AsyncTaskStatusRetryScheduled {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot delete a backup job that is still active"})
+			}
+		}
+		if job.OutputPath != "" {
+			_ = storage.MinioClient.RemoveObject(c.Context(), "photos", job.OutputPath, minio.RemoveObjectOptions{})
+		}
 		database.DB.Delete(&job)
 		return c.JSON(fiber.Map{"deleted": true})
 	})
@@ -3408,18 +3386,20 @@ func main() {
 		if err := database.DB.First(&job, c.Params("id")).Error; err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not found"})
 		}
-		job.Status = body.Status
-		if body.OutputPath != "" {
-			job.OutputPath = body.OutputPath
+		var err error
+		switch body.Status {
+		case "processing":
+			err = markBackupJobProcessing(&job)
+		case "completed":
+			err = markBackupJobCompleted(&job, body.OutputPath)
+		case "failed":
+			err = markBackupJobFailed(&job, body.ErrorMessage)
+		default:
+			err = database.DB.Model(&job).Update("status", body.Status).Error
 		}
-		if body.ErrorMessage != "" {
-			job.ErrorMessage = body.ErrorMessage
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update backup job"})
 		}
-		if body.Status == "completed" || body.Status == "failed" {
-			now := time.Now()
-			job.CompletedAt = &now
-		}
-		database.DB.Save(&job)
 		return c.JSON(job)
 	})
 
@@ -3429,6 +3409,110 @@ func main() {
 		database.DB.Where("user_id = ? AND status = 'completed'", c.Params("user_id")).
 			Preload("ExifData").Order("uploaded_at desc").Find(&photos)
 		return c.JSON(photos)
+	})
+
+	// PUT /internal/async-tasks/:id/start — mark a durable async task as processing
+	app.Put("/internal/async-tasks/:id/start", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		taskID, err := c.ParamsInt("id")
+		if err != nil || taskID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid task id"})
+		}
+		var body struct {
+			WorkerID string `json:"worker_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		task, err := queue.StartAsyncTask(uint(taskID), body.WorkerID)
+		if err != nil {
+			if errors.Is(err, queue.ErrAsyncTaskAlreadyActive) || errors.Is(err, queue.ErrAsyncTaskNotRunnable) {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "task not found"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to start task"})
+		}
+		return c.JSON(task)
+	})
+
+	// PUT /internal/async-tasks/:id/heartbeat — extend the lease for an in-flight async task
+	app.Put("/internal/async-tasks/:id/heartbeat", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		taskID, err := c.ParamsInt("id")
+		if err != nil || taskID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid task id"})
+		}
+		var body struct {
+			WorkerID string `json:"worker_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		task, err := queue.HeartbeatAsyncTask(uint(taskID), body.WorkerID)
+		if err != nil {
+			if errors.Is(err, queue.ErrAsyncTaskAlreadyActive) || errors.Is(err, queue.ErrAsyncTaskNotRunnable) {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "task not found"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to heartbeat task"})
+		}
+		return c.JSON(task)
+	})
+
+	// PUT /internal/async-tasks/:id/succeed — mark a durable async task as completed
+	app.Put("/internal/async-tasks/:id/succeed", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		taskID, err := c.ParamsInt("id")
+		if err != nil || taskID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid task id"})
+		}
+		var body struct {
+			WorkerID string `json:"worker_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		task, err := queue.SucceedAsyncTask(uint(taskID), body.WorkerID)
+		if err != nil {
+			if errors.Is(err, queue.ErrAsyncTaskAlreadyActive) || errors.Is(err, queue.ErrAsyncTaskNotRunnable) {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "task not found"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to complete task"})
+		}
+		return c.JSON(task)
+	})
+
+	// PUT /internal/async-tasks/:id/fail — schedule retry or dead-letter a task
+	app.Put("/internal/async-tasks/:id/fail", requireInternalSecret(internalSecret), func(c *fiber.Ctx) error {
+		taskID, err := c.ParamsInt("id")
+		if err != nil || taskID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid task id"})
+		}
+		var body struct {
+			WorkerID     string `json:"worker_id"`
+			ErrorMessage string `json:"error_message"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		}
+		task, err := queue.FailAsyncTask(uint(taskID), body.WorkerID, body.ErrorMessage)
+		if err != nil {
+			if errors.Is(err, queue.ErrAsyncTaskAlreadyActive) || errors.Is(err, queue.ErrAsyncTaskNotRunnable) {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "task not found"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fail task"})
+		}
+		if task.Status == queue.AsyncTaskStatusDeadLetter {
+			handleTerminalAsyncTaskFailure(task)
+		}
+		return c.JSON(task)
 	})
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -4037,6 +4121,7 @@ func main() {
 			JobID   uint `json:"job_id"`
 		}
 		var jobs []JobRef
+		traceparent := requestTraceparent(c)
 		for _, photo := range photos {
 			job := models.ExportJob{
 				PhotoID:       photo.ID,
@@ -4047,12 +4132,8 @@ func main() {
 			if err := database.DB.Create(&job).Error; err != nil {
 				continue
 			}
-			traceparent := c.Get("Traceparent")
-			if traceparent == "" {
-				traceparent = c.Get("traceparent")
-			}
-			if err := queue.PublishExportTask(job.ID, photo.ID, optsJSON, traceparent); err != nil {
-				database.DB.Model(&job).Update("status", "failed")
+			if _, err := queue.EnqueueExportTask(job.ID, photo.ID, optsJSON, traceparent); err != nil {
+				log.Printf("Failed to enqueue bulk export job %d: %v", job.ID, err)
 				continue
 			}
 			jobs = append(jobs, JobRef{PhotoID: photo.ID, JobID: job.ID})
@@ -4347,13 +4428,9 @@ func main() {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create export job"})
 		}
 
-		traceparent := c.Get("Traceparent")
-		if traceparent == "" {
-			traceparent = c.Get("traceparent")
-		}
-		if err := queue.PublishAlbumExportTask(job.ID, albumIDUint, string(optsRaw), traceparent); err != nil {
-			database.DB.Model(&job).Updates(map[string]interface{}{"status": "failed", "error_message": err.Error()})
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to queue export task"})
+		traceparent := requestTraceparent(c)
+		if _, err := queue.EnqueueAlbumExportTask(job.ID, albumIDUint, string(optsRaw), traceparent); err != nil {
+			log.Printf("Failed to enqueue album export job %d: %v", job.ID, err)
 		}
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -4860,7 +4937,7 @@ func main() {
 		publicPhotos := make([]PublicPhoto, 0, len(photos))
 		for _, p := range photos {
 			// Derive thumbnail path from raw path
-			thumbPath := strings.Replace(p.MinioPath, "raw/", "thumbnail/", 1)
+			thumbPath := strings.Replace(p.MinioPath, "raw/", "thumb/", 1)
 			thumbPath = strings.TrimSuffix(thumbPath, filepath.Ext(thumbPath)) + ".webp"
 			var thumbURL string
 			if u, err := storage.MinioClient.PresignedGetObject(c.Context(), "photos", thumbPath, time.Hour, nil); err == nil {
@@ -4967,41 +5044,136 @@ func main() {
 	// GET /api/admin/stats — site statistics (SuperAdmin)
 	app.Get("/api/admin/stats", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
 		var stats struct {
-			TotalUsers   int64 `json:"total_users"`
-			TotalPhotos  int64 `json:"total_photos"`
-			TotalAlbums  int64 `json:"total_albums"`
-			TotalPresets int64 `json:"total_presets"`
+			TotalUsers    int64 `json:"total_users"`
+			TotalPhotos   int64 `json:"total_photos"`
+			PendingPhotos int64 `json:"pending_photos"`
+			TotalAlbums   int64 `json:"total_albums"`
+			TotalPresets  int64 `json:"total_presets"`
+			RecentUsers   int64 `json:"recent_users"`
 		}
 		database.DB.Raw(`
 			SELECT 
 				(SELECT COUNT(*) FROM users WHERE deleted_at IS NULL) as total_users,
 				(SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL) as total_photos,
+				(SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL AND status = 'processing') as pending_photos,
 				(SELECT COUNT(*) FROM albums WHERE deleted_at IS NULL) as total_albums,
-				(SELECT COUNT(*) FROM presets WHERE deleted_at IS NULL) as total_presets
+				(SELECT COUNT(*) FROM presets WHERE deleted_at IS NULL) as total_presets,
+				(SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND created_at >= NOW() - INTERVAL '30 days') as recent_users
 		`).Scan(&stats)
 
 		var topUsers []struct {
-			UserID   uint   `json:"user_id"`
-			Username string `json:"username"`
-			Count    int64  `json:"count"`
+			UserID     uint   `json:"user_id"`
+			Username   string `json:"username"`
+			PhotoCount int64  `json:"photo_count"`
 		}
 		database.DB.Raw(`
-			SELECT p.user_id, u.username, COUNT(p.id) AS count
+			SELECT p.user_id, u.username, COUNT(p.id) AS photo_count
 			FROM photos p
 			JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL
 			WHERE p.deleted_at IS NULL
 			GROUP BY p.user_id, u.username
-			ORDER BY count DESC
+			ORDER BY photo_count DESC
 			LIMIT 10
 		`).Scan(&topUsers)
 
 		return c.JSON(fiber.Map{
-			"total_users":   stats.TotalUsers,
-			"total_photos":  stats.TotalPhotos,
-			"total_albums":  stats.TotalAlbums,
-			"total_presets": stats.TotalPresets,
-			"top_users":     topUsers,
+			"total_users":    stats.TotalUsers,
+			"total_photos":   stats.TotalPhotos,
+			"pending_photos": stats.PendingPhotos,
+			"total_albums":   stats.TotalAlbums,
+			"total_presets":  stats.TotalPresets,
+			"recent_users":   stats.RecentUsers,
+			"top_users":      topUsers,
 		})
+	})
+
+	// GET /api/admin/jobs — inspect durable async task state (SuperAdmin)
+	app.Get("/api/admin/jobs", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		page, limit, err := validatePagination(c)
+		if err != nil {
+			return err
+		}
+		statusFilter := strings.TrimSpace(c.Query("status"))
+		taskTypeFilter := strings.TrimSpace(c.Query("task_type"))
+
+		query := database.DB.Model(&models.AsyncTask{})
+		if statusFilter != "" {
+			query = query.Where("status = ?", statusFilter)
+		}
+		if taskTypeFilter != "" {
+			query = query.Where("task_type = ?", taskTypeFilter)
+		}
+
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to count jobs"})
+		}
+
+		var tasks []models.AsyncTask
+		offset := (page - 1) * limit
+		if err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&tasks).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list jobs"})
+		}
+
+		return c.JSON(fiber.Map{
+			"jobs":  tasks,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+		})
+	})
+
+	// GET /api/admin/jobs/:id — inspect a single durable async task (SuperAdmin)
+	app.Get("/api/admin/jobs/:id", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		var task models.AsyncTask
+		if err := database.DB.First(&task, c.Params("id")).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "job not found"})
+		}
+		return c.JSON(task)
+	})
+
+	// POST /api/admin/jobs/:id/retry — manually retry a dead-letter async task (SuperAdmin)
+	app.Post("/api/admin/jobs/:id/retry", requireJWT(), requireRole("SuperAdmin"), func(c *fiber.Ctx) error {
+		taskID, err := c.ParamsInt("id")
+		if err != nil || taskID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid job id"})
+		}
+
+		var task models.AsyncTask
+		if err := database.DB.First(&task, taskID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "job not found"})
+		}
+
+		switch task.ResourceType {
+		case "export_job":
+			var job models.ExportJob
+			if err := database.DB.First(&job, task.ResourceID).Error; err == nil {
+				if err := markExportJobPending(&job); err != nil {
+					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to reset export job"})
+				}
+			}
+		case "backup_job":
+			var job models.BackupJob
+			if err := database.DB.First(&job, task.ResourceID).Error; err == nil {
+				if err := markBackupJobPending(&job); err != nil {
+					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to reset backup job"})
+				}
+			}
+		}
+
+		retriedTask, retryErr := queue.RetryAsyncTask(uint(taskID))
+		if retryErr != nil {
+			if errors.Is(retryErr, queue.ErrAsyncTaskNotRunnable) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": retryErr.Error()})
+			}
+			log.Printf("Failed to immediately republish async task %d after retry request: %v", taskID, retryErr)
+			return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+				"warning": "retry scheduled but not yet published; sweeper will retry it",
+				"task":    retriedTask,
+			})
+		}
+
+		return c.JSON(retriedTask)
 	})
 
 	// GET /api/admin/users/:id/photos — paginated photos for a specific user (SuperAdmin)
@@ -5053,7 +5225,7 @@ func main() {
 		if err := c.BodyParser(&body); err != nil || body.Role == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "role is required"})
 		}
-		allowed := map[string]bool{"User": true, "admin": true, "SuperAdmin": true}
+		allowed := map[string]bool{"User": true, "admin": true, "StandardUser": true, "SuperAdmin": true}
 		if !allowed[body.Role] {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid role"})
 		}
@@ -5748,6 +5920,7 @@ func main() {
 
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	startAsyncTaskSweeper(shutdownCtx)
 
 	go func() {
 		<-shutdownCtx.Done()

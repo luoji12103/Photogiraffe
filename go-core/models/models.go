@@ -113,6 +113,27 @@ type ExportJob struct {
 	CompletedAt   *time.Time // nullable; set when status transitions to completed/failed
 }
 
+// AsyncTask tracks durable worker-backed jobs and retry state.
+type AsyncTask struct {
+	gorm.Model
+	TaskType        string     `gorm:"not null;index"`
+	StreamName      string     `gorm:"not null"`
+	ResourceType    string     `gorm:"not null;index:idx_async_tasks_resource,priority:1"`
+	ResourceID      uint       `gorm:"index:idx_async_tasks_resource,priority:2"`
+	Status          string     `gorm:"not null;default:'pending';index"`
+	IdempotencyKey  string     `gorm:"not null;uniqueIndex"`
+	Payload         string     `gorm:"type:jsonb;not null"`
+	AttemptCount    int        `gorm:"default:0"`
+	MaxAttempts     int        `gorm:"default:3"`
+	NextAttemptAt   *time.Time `gorm:"index"`
+	LeaseExpiresAt  *time.Time `gorm:"index"`
+	LastHeartbeatAt *time.Time
+	WorkerID        string
+	Traceparent     string
+	LastError       string `gorm:"type:text"`
+	CompletedAt     *time.Time
+}
+
 // Preset stores a named set of colour-adjustment parameters for reuse.
 type Preset struct {
 	gorm.Model
@@ -264,11 +285,11 @@ type Favorite struct {
 // SmartAlbum is a dynamically-evaluated collection of photos matching a rule.
 // RuleType determines how RuleParams JSON is interpreted.
 //
-//   date_range         {"from":"2024-01-01","to":"2024-12-31"}
-//   tags_contain       {"tags":["portrait","night"]}
-//   camera_model       {"model":"Sony A7 III"}
-//   auto_tags_contain  {"tags":["person","sky"]}
-//   color_bucket       {"bucket":"blue"}
+//	date_range         {"from":"2024-01-01","to":"2024-12-31"}
+//	tags_contain       {"tags":["portrait","night"]}
+//	camera_model       {"model":"Sony A7 III"}
+//	auto_tags_contain  {"tags":["person","sky"]}
+//	color_bucket       {"bucket":"blue"}
 type SmartAlbum struct {
 	gorm.Model
 	UserID     uint   `gorm:"not null;index"`
