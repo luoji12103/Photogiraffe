@@ -3,6 +3,7 @@ import re
 import time
 import logging
 import json
+import threading
 import zipfile
 import requests
 import base64
@@ -198,8 +199,171 @@ STREAM_NAME = "image_processing_queue"
 AI_STREAM_NAME = "ai_analysis_queue"
 EXPORT_STREAM_NAME = "export_queue"
 INFER_STREAM_NAME = "infer_params_queue"
+BACKUP_STREAM_NAME = "backup_queue"
+AUTO_TAG_STREAM_NAME = "auto_tag_queue"
 GROUP_NAME = "python_workers"
 CONSUMER_NAME = "worker_1"
+RAW_EXTENSIONS = (".arw", ".cr2", ".cr3", ".nef", ".nrw", ".raf", ".rw2", ".orf", ".pef", ".srw", ".dng")
+ASYNC_TASK_HEARTBEAT_INTERVAL = max(10, int(os.getenv("ASYNC_TASK_HEARTBEAT_INTERVAL_SECONDS", "20")))
+
+
+def _internal_headers(traceparent: str = "") -> dict:
+    headers = {"X-Internal-Secret": INTERNAL_SECRET}
+    if traceparent:
+        headers["traceparent"] = traceparent
+    return headers
+
+
+def _start_async_task(task_id: str, worker_name: str, traceparent: str = "") -> bool:
+    res = requests.put(
+        f"{GO_CORE_URL}/internal/async-tasks/{task_id}/start",
+        json={"worker_id": worker_name},
+        headers=_internal_headers(traceparent),
+        timeout=10,
+    )
+    if res.status_code == 409:
+        logger.info(f"[task:{task_id}] start skipped: {res.text}")
+        return False
+    res.raise_for_status()
+    return True
+
+
+def _heartbeat_async_task(task_id: str, worker_name: str, traceparent: str = "") -> None:
+    res = requests.put(
+        f"{GO_CORE_URL}/internal/async-tasks/{task_id}/heartbeat",
+        json={"worker_id": worker_name},
+        headers=_internal_headers(traceparent),
+        timeout=10,
+    )
+    if res.status_code not in (200, 409):
+        res.raise_for_status()
+
+
+def _succeed_async_task(task_id: str, worker_name: str, traceparent: str = "") -> None:
+    res = requests.put(
+        f"{GO_CORE_URL}/internal/async-tasks/{task_id}/succeed",
+        json={"worker_id": worker_name},
+        headers=_internal_headers(traceparent),
+        timeout=10,
+    )
+    if res.status_code not in (200, 409):
+        res.raise_for_status()
+
+
+def _fail_async_task(task_id: str, worker_name: str, error_message: str, traceparent: str = "") -> None:
+    res = requests.put(
+        f"{GO_CORE_URL}/internal/async-tasks/{task_id}/fail",
+        json={"worker_id": worker_name, "error_message": error_message[:2000]},
+        headers=_internal_headers(traceparent),
+        timeout=10,
+    )
+    if res.status_code != 200:
+        res.raise_for_status()
+
+
+class AsyncTaskLease:
+    def __init__(self, task_id: str | None, worker_name: str, traceparent: str = "") -> None:
+        self.task_id = task_id
+        self.worker_name = worker_name
+        self.traceparent = traceparent
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if not self.task_id:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if not self.task_id:
+            return
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _run(self) -> None:
+        while not self._stop.wait(ASYNC_TASK_HEARTBEAT_INTERVAL):
+            try:
+                _heartbeat_async_task(self.task_id, self.worker_name, self.traceparent)
+            except Exception as exc:
+                logger.warning(f"[task:{self.task_id}] heartbeat failed: {exc}")
+
+
+def _is_raw_path(minio_path: str) -> bool:
+    return minio_path.lower().endswith(RAW_EXTENSIONS)
+
+
+def _build_variant_path(minio_path: str, prefix: str) -> str:
+    return minio_path.replace("raw/", f"{prefix}/", 1).rsplit(".", 1)[0] + ".webp"
+
+
+def _read_minio_bytes(minio_client, bucket_name: str, object_path: str) -> bytes:
+    response = None
+    try:
+        response = minio_client.get_object(bucket_name, object_path)
+        return response.read()
+    finally:
+        if response:
+            response.close()
+            response.release_conn()
+
+
+def _open_image(img_data: bytes, minio_path: str) -> tuple[Image.Image, bool]:
+    is_raw = _is_raw_path(minio_path)
+
+    if is_raw:
+        logger.info("Detected RAW image, processing with rawpy...")
+        with rawpy.imread(BytesIO(img_data)) as raw:
+            rgb = raw.postprocess(use_camera_wb=True, half_size=True)
+        return Image.fromarray(rgb), True
+
+    return Image.open(BytesIO(img_data)), False
+
+
+def _build_auto_tags(img: Image.Image) -> list[str]:
+    rgb = img.convert("RGB")
+    preview = rgb.copy()
+    preview.thumbnail((128, 128), Image.Resampling.LANCZOS)
+
+    arr = np.asarray(preview, dtype=np.float32)
+    if arr.size == 0:
+        return []
+
+    height, width = preview.height, preview.width
+    tags: set[str] = set()
+    aspect_ratio = width / max(height, 1)
+
+    if aspect_ratio >= 1.2:
+        tags.add("landscape-orientation")
+    elif aspect_ratio <= 0.83:
+        tags.add("portrait-orientation")
+    else:
+        tags.add("square")
+
+    brightness = float(arr.mean()) / 255.0
+    if brightness >= 0.72:
+        tags.add("bright")
+    elif brightness <= 0.28:
+        tags.add("dark")
+    else:
+        tags.add("balanced-light")
+
+    warmth = float(arr[:, :, 0].mean() - arr[:, :, 2].mean())
+    if warmth >= 18:
+        tags.add("warm-tones")
+    elif warmth <= -18:
+        tags.add("cool-tones")
+    else:
+        tags.add("neutral-tones")
+
+    dominant_colors = _extract_dominant_colors(preview, n_colors=4)
+    for color in dominant_colors[:3]:
+        bucket = color.get("bucket")
+        if bucket:
+            tags.add(f"color-{bucket}")
+
+    return sorted(tags)
 
 def init_redis():
     r = redis.Redis(host=REDIS_HOST, port=6379, password=REDIS_PASSWORD, decode_responses=True)
@@ -230,6 +394,20 @@ def init_redis():
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP Consumer Group name already exists" not in str(e):
             logger.error(f"Error creating consumer group: {e}")
+
+    try:
+        r.xgroup_create(BACKUP_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        logger.info(f"Created consumer group {GROUP_NAME} for stream {BACKUP_STREAM_NAME}")
+    except redis.exceptions.ResponseError as e:
+        if "BUSYGROUP Consumer Group name already exists" not in str(e):
+            logger.error(f"Error creating consumer group: {e}")
+
+    try:
+        r.xgroup_create(AUTO_TAG_STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        logger.info(f"Created consumer group {GROUP_NAME} for stream {AUTO_TAG_STREAM_NAME}")
+    except redis.exceptions.ResponseError as e:
+        if "BUSYGROUP Consumer Group name already exists" not in str(e):
+            logger.error(f"Error creating consumer group: {e}")
     return r
 
 def init_minio():
@@ -245,31 +423,16 @@ def process_image(minio_client, photo_id, minio_path, traceparent=""):
     try:
         # 1. Download original image
         logger.info(f"Downloading {minio_path} from MinIO...")
-        response = None
-        try:
-            response = minio_client.get_object(bucket_name, minio_path)
-            img_data = response.read()
-        finally:
-            if response:
-                response.close()
-                response.release_conn()
+        img_data = _read_minio_bytes(minio_client, bucket_name, minio_path)
 
         # 2. Process image with Pillow or rawpy
         logger.info(f"Processing image {photo_id}...")
-        
-        is_raw = minio_path.lower().endswith(('.arw', '.cr2', '.nef', '.dng', '.raf'))
-        
-        if is_raw:
-            logger.info("Detected RAW image, processing with rawpy...")
-            try:
-                with rawpy.imread(BytesIO(img_data)) as raw:
-                    rgb = raw.postprocess(use_camera_wb=True, half_size=True)
-                img = Image.fromarray(rgb)
-            except Exception as e:
-                logger.error(f"Failed to process RAW image with rawpy: {e}")
-                raise e
-        else:
-            img = Image.open(BytesIO(img_data))
+
+        try:
+            img, is_raw = _open_image(img_data, minio_path)
+        except Exception as e:
+            logger.error(f"Failed to open image {photo_id}: {e}")
+            raise e
         
         # Extract EXIF data using exifread
         exif_data = {}
@@ -370,7 +533,7 @@ def process_image(minio_client, photo_id, minio_path, traceparent=""):
         proxy_io = BytesIO()
         proxy_img.save(proxy_io, format="WEBP", quality=85)
         proxy_io.seek(0)
-        proxy_path = minio_path.replace("raw/", "proxy/").rsplit(".", 1)[0] + ".webp"
+        proxy_path = _build_variant_path(minio_path, "proxy")
 
         # Generate Thumbnail (max 512px)
         thumb_img = img.copy()
@@ -378,7 +541,7 @@ def process_image(minio_client, photo_id, minio_path, traceparent=""):
         thumb_io = BytesIO()
         thumb_img.save(thumb_io, format="WEBP", quality=80)
         thumb_io.seek(0)
-        thumb_path = minio_path.replace("raw/", "thumb/").rsplit(".", 1)[0] + ".webp"
+        thumb_path = _build_variant_path(minio_path, "thumb")
 
         # 3. Upload processed images back to MinIO
         logger.info(f"Uploading proxy to {proxy_path}...")
@@ -1129,7 +1292,8 @@ def _render_frame(
 
 # ─── Phase 14 album export ────────────────────────────────────────────────────
 
-def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str, traceparent: str = "") -> bool:
+def process_album_export(minio_client, job_id: str, album_id: str, opts_json: str,
+                         traceparent: str = "", managed_task: bool = False) -> bool:
     """Phase 14: export all photos in an album as ZIP or PDF."""
     opts: dict = {}
     try:
@@ -1146,7 +1310,7 @@ def process_album_export(minio_client, job_id: str, album_id: str, opts_json: st
     logger.info(f"[album-export:{job_id}] album={album_id} fmt={fmt} spec={print_spec}")
 
     try:
-        _update_export_status(job_id, "processing", traceparent=traceparent)
+        _update_export_status(job_id, "processing", traceparent=traceparent, raise_on_error=managed_task)
 
         # 1. Fetch photo list from internal endpoint
         res = requests.get(
@@ -1173,14 +1337,16 @@ def process_album_export(minio_client, job_id: str, album_id: str, opts_json: st
                 quality, print_spec, bucket
             )
 
-        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent)
+        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent, raise_on_error=True)
         logger.info(f"[album-export:{job_id}] done → {output_path}")
         return True
 
     except Exception as e:
         logger.error(f"[album-export:{job_id}] failed: {e}", exc_info=True)
-        _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
-        return False
+        if not managed_task:
+            _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
+            return False
+        raise
 
 
 def _download_photo_for_export(minio_client, minio_path: str, quality: int, print_spec: str, bucket="photos") -> bytes:
@@ -1308,7 +1474,8 @@ def _album_to_pdf(minio_client, job_id, album_id, album_name, photos, quality, p
     return output_path
 
 
-def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str, traceparent: str = "") -> bool:
+def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str,
+                        traceparent: str = "", managed_task: bool = False) -> bool:
     """
     Export pipeline:
       download → decode → adjust → resize → watermark → EXIF → upload → notify
@@ -1327,14 +1494,16 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         embed_exif = bool(opts.get("embed_exif", True))
 
         # Mark job as processing
-        _update_export_status(job_id, "processing", traceparent=traceparent)
+        _update_export_status(job_id, "processing", traceparent=traceparent, raise_on_error=managed_task)
 
         # 1. Fetch photo record from Go Core via internal endpoint (X-Internal-Secret, no JWT needed)
         photo_meta = _fetch_photo_meta(photo_id)
         if not photo_meta or not photo_meta.get("minio_path"):
             logger.error(f"[export:{job_id}] failed to fetch photo meta for photo_id={photo_id}")
-            _update_export_status(job_id, "failed")
-            return False
+            if not managed_task:
+                _update_export_status(job_id, "failed")
+                return False
+            raise RuntimeError(f"failed to fetch photo metadata for photo {photo_id}")
         minio_path = photo_meta["minio_path"]
 
         logger.info(f"[export:{job_id}] Downloading {minio_path}...")
@@ -1463,13 +1632,15 @@ def process_export_task(minio_client, job_id: str, photo_id: str, opts_json: str
         logger.info(f"[export:{job_id}] Uploaded {output_path} ({out_size} bytes)")
 
         # 8. Notify Go Core of completion
-        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent)
+        _update_export_status(job_id, "completed", output_path=output_path, traceparent=traceparent, raise_on_error=True)
         return True
 
     except Exception as e:
         logger.error(f"[export:{job_id}] Export failed: {e}", exc_info=True)
-        _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
-        return False
+        if not managed_task:
+            _update_export_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
+            return False
+        raise
 
 
 # ─── AI Parameter Inference ─────────────────────────────────────────────────
@@ -1577,7 +1748,8 @@ def process_infer_params_task(minio_client, photo_id: str, minio_path: str,
 
 
 def _update_export_status(job_id: str, status: str,
-                          output_path: str = "", error_message: str = "", traceparent: str = "") -> None:
+                          output_path: str = "", error_message: str = "", traceparent: str = "",
+                          raise_on_error: bool = False) -> bool:
     url = f"{GO_CORE_URL}/internal/exports/{job_id}/status"
     payload = {"status": status}
     if output_path:
@@ -1585,14 +1757,123 @@ def _update_export_status(job_id: str, status: str,
     if error_message:
         payload["error_message"] = error_message
     try:
+        res = requests.put(url, json=payload,
+                           headers=_internal_headers(traceparent), timeout=10)
+        res.raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning(f"[export:{job_id}] Failed to update status to {status}: {e}")
+        if raise_on_error:
+            raise
+        return False
+
+
+def _update_backup_status(job_id: str, status: str,
+                          output_path: str = "", error_message: str = "", traceparent: str = "",
+                          raise_on_error: bool = False) -> bool:
+    url = f"{GO_CORE_URL}/internal/backup-jobs/{job_id}/status"
+    payload = {"status": status}
+    if output_path:
+        payload["output_path"] = output_path
+    if error_message:
+        payload["error_message"] = error_message
+    try:
+        res = requests.put(url, json=payload, headers=_internal_headers(traceparent), timeout=10)
+        res.raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning(f"[backup:{job_id}] Failed to update status to {status}: {e}")
+        if raise_on_error:
+            raise
+        return False
+
+
+def process_backup_export_task(minio_client, job_id: str, user_id: str, traceparent: str = "",
+                               managed_task: bool = False) -> bool:
+    logger.info(f"[backup:{job_id}] Starting metadata export for user {user_id}")
+    _update_backup_status(job_id, "processing", traceparent=traceparent, raise_on_error=managed_task)
+
+    try:
         headers = {"X-Internal-Secret": INTERNAL_SECRET}
         if traceparent:
             headers["traceparent"] = traceparent
-        res = requests.put(url, json=payload,
-                           headers=headers, timeout=10)
+
+        res = requests.get(
+            f"{GO_CORE_URL}/internal/users/{user_id}/photos",
+            headers=headers,
+            timeout=30,
+        )
         res.raise_for_status()
+        photos = res.json()
+
+        manifest = {
+            "app": "Photogiraffe",
+            "format": "metadata-only-backup",
+            "version": 1,
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "user_id": int(user_id),
+            "photo_count": len(photos),
+        }
+        metadata = {
+            **manifest,
+            "photos": photos,
+        }
+
+        archive_io = BytesIO()
+        with zipfile.ZipFile(archive_io, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            archive.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
+            archive.writestr(
+                "README.txt",
+                "This backup contains Photogiraffe metadata only. Original photo binaries remain in object storage.\n",
+            )
+
+        archive_bytes = archive_io.getvalue()
+        output_path = f"exports/backups/user_{user_id}/backup_{job_id}.zip"
+        minio_client.put_object(
+            "photos",
+            output_path,
+            BytesIO(archive_bytes),
+            len(archive_bytes),
+            content_type="application/zip",
+        )
+
+        _update_backup_status(job_id, "completed", output_path=output_path, traceparent=traceparent, raise_on_error=True)
+        logger.info(f"[backup:{job_id}] Backup archive written to {output_path}")
+        return True
     except Exception as e:
-        logger.warning(f"[export:{job_id}] Failed to update status to {status}: {e}")
+        logger.error(f"[backup:{job_id}] Backup export failed: {e}", exc_info=True)
+        if not managed_task:
+            _update_backup_status(job_id, "failed", error_message=str(e), traceparent=traceparent)
+            return False
+        raise
+
+
+def process_auto_tag_task(minio_client, photo_id: str, minio_path: str, traceparent: str = "") -> bool:
+    logger.info(f"[auto-tag:{photo_id}] Starting heuristic tagging for {minio_path}")
+
+    try:
+        img_data = _read_minio_bytes(minio_client, "photos", minio_path)
+        img, _ = _open_image(img_data, minio_path)
+        img = convert_to_srgb(img)
+        tags = _build_auto_tags(img)
+
+        headers = {"X-Internal-Secret": INTERNAL_SECRET}
+        if traceparent:
+            headers["traceparent"] = traceparent
+
+        res = requests.put(
+            f"{GO_CORE_URL}/internal/photos/{photo_id}/auto-tags",
+            json={"auto_tags": json.dumps(tags)},
+            headers=headers,
+            timeout=10,
+        )
+        res.raise_for_status()
+        logger.info(f"[auto-tag:{photo_id}] Saved tags: {tags}")
+        return True
+    except Exception as e:
+        logger.error(f"[auto-tag:{photo_id}] Auto-tagging failed: {e}", exc_info=True)
+        return False
 
 
 def worker_process(worker_id):
@@ -1602,13 +1883,15 @@ def worker_process(worker_id):
     
     r = init_redis()
     minio_client = init_minio()
+    worker_name = f"{CONSUMER_NAME}-{worker_id}"
 
     logger.info(f"Worker {worker_id} started. Waiting for tasks...")
     while True:
         try:
-            messages = r.xreadgroup(GROUP_NAME, f"{CONSUMER_NAME}-{worker_id}",
+            messages = r.xreadgroup(GROUP_NAME, worker_name,
                                     {STREAM_NAME: ">", AI_STREAM_NAME: ">",
-                                     EXPORT_STREAM_NAME: ">", INFER_STREAM_NAME: ">"},
+                                     EXPORT_STREAM_NAME: ">", INFER_STREAM_NAME: ">",
+                                     BACKUP_STREAM_NAME: ">", AUTO_TAG_STREAM_NAME: ">"},
                                     count=1, block=5000)
             
             if not messages:
@@ -1622,8 +1905,35 @@ def worker_process(worker_id):
                         photo_id = message_data.get("photo_id")
                         minio_path = message_data.get("minio_path")
                         traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
                         
-                        if photo_id and minio_path:
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if not (photo_id and minio_path):
+                                        raise ValueError("invalid image processing payload")
+                                    success = process_image(minio_client, photo_id, minio_path, traceparent)
+                                    if success:
+                                        _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    else:
+                                        _fail_async_task(task_id_str, worker_name, "image processing failed; inspect worker logs for details", traceparent)
+                                    r.xack(STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] image processing task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
+                        elif photo_id and minio_path:
                             success = process_image(minio_client, photo_id, minio_path, traceparent)
                             if success:
                                 r.xack(STREAM_NAME, GROUP_NAME, message_id)
@@ -1639,8 +1949,35 @@ def worker_process(worker_id):
                         model_name = message_data.get("model_name")
                         prompt_language = message_data.get("prompt_language", "en")
                         traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
 
-                        if photo_id and minio_path and api_key and model_name:
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if not (photo_id and minio_path and api_key and model_name):
+                                        raise ValueError("invalid AI analysis payload")
+                                    success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language, traceparent)
+                                    if success:
+                                        _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    else:
+                                        _fail_async_task(task_id_str, worker_name, "AI analysis failed; inspect worker logs for details", traceparent)
+                                    r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] AI analysis task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
+                        elif photo_id and minio_path and api_key and model_name:
                             success = process_ai_analysis(minio_client, photo_id, minio_path, provider, api_key, model_name, base_url, prompt_language, traceparent)
                             if success:
                                 r.xack(AI_STREAM_NAME, GROUP_NAME, message_id)
@@ -1654,15 +1991,40 @@ def worker_process(worker_id):
                         task_type = message_data.get("type", "photo_export")
                         opts_json = message_data.get("export_options", "{}")
                         traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
 
-                        if job_id and task_type == "album_export" and album_id:
-                            success = process_album_export(minio_client, job_id, album_id, opts_json, traceparent)
-                        elif job_id and photo_id:
-                            success = process_export_task(minio_client, job_id, photo_id, opts_json, traceparent)
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if job_id and task_type == "album_export" and album_id:
+                                        process_album_export(minio_client, job_id, album_id, opts_json, traceparent, managed_task=True)
+                                    elif job_id and photo_id:
+                                        process_export_task(minio_client, job_id, photo_id, opts_json, traceparent, managed_task=True)
+                                    else:
+                                        raise ValueError("invalid export payload")
+                                    _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] export task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
                         else:
-                            success = True
-
-                        r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
+                            if job_id and task_type == "album_export" and album_id:
+                                process_album_export(minio_client, job_id, album_id, opts_json, traceparent)
+                            elif job_id and photo_id:
+                                process_export_task(minio_client, job_id, photo_id, opts_json, traceparent)
+                            r.xack(EXPORT_STREAM_NAME, GROUP_NAME, message_id)
 
                     elif stream == INFER_STREAM_NAME:
                         photo_id   = message_data.get("photo_id")
@@ -1673,12 +2035,111 @@ def worker_process(worker_id):
                         model_name = message_data.get("model_name")
                         prompt_language = message_data.get("prompt_language", "en")
                         traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
 
-                        if photo_id and minio_path and api_key and model_name:
-                            process_infer_params_task(minio_client, photo_id, minio_path,
-                                                      provider, api_key, model_name, base_url, prompt_language, traceparent)
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if not (photo_id and minio_path and api_key and model_name):
+                                        raise ValueError("invalid infer payload")
+                                    success = process_infer_params_task(minio_client, photo_id, minio_path,
+                                                                        provider, api_key, model_name, base_url, prompt_language, traceparent)
+                                    if success:
+                                        _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    else:
+                                        _fail_async_task(task_id_str, worker_name, "parameter inference failed; inspect worker logs for details", traceparent)
+                                    r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] infer task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
+                        else:
+                            if photo_id and minio_path and api_key and model_name:
+                                process_infer_params_task(minio_client, photo_id, minio_path,
+                                                          provider, api_key, model_name, base_url, prompt_language, traceparent)
+                            r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
 
-                        r.xack(INFER_STREAM_NAME, GROUP_NAME, message_id)
+                    elif stream == BACKUP_STREAM_NAME:
+                        job_id = message_data.get("job_id")
+                        user_id = message_data.get("user_id")
+                        traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
+
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(BACKUP_STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if not (job_id and user_id):
+                                        raise ValueError("invalid backup payload")
+                                    process_backup_export_task(minio_client, job_id, user_id, traceparent, managed_task=True)
+                                    _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    r.xack(BACKUP_STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] backup task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(BACKUP_STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
+                        else:
+                            if job_id and user_id:
+                                process_backup_export_task(minio_client, job_id, user_id, traceparent)
+                            r.xack(BACKUP_STREAM_NAME, GROUP_NAME, message_id)
+
+                    elif stream == AUTO_TAG_STREAM_NAME:
+                        photo_id = message_data.get("photo_id")
+                        minio_path = message_data.get("minio_path")
+                        traceparent = message_data.get("traceparent", "")
+                        task_id = message_data.get("task_id")
+
+                        if task_id:
+                            task_id_str = str(task_id)
+                            try:
+                                if not _start_async_task(task_id_str, worker_name, traceparent):
+                                    r.xack(AUTO_TAG_STREAM_NAME, GROUP_NAME, message_id)
+                                    continue
+                                lease = AsyncTaskLease(task_id_str, worker_name, traceparent)
+                                lease.start()
+                                try:
+                                    if not (photo_id and minio_path):
+                                        raise ValueError("invalid auto-tag payload")
+                                    success = process_auto_tag_task(minio_client, photo_id, minio_path, traceparent)
+                                    if success:
+                                        _succeed_async_task(task_id_str, worker_name, traceparent)
+                                    else:
+                                        _fail_async_task(task_id_str, worker_name, "auto-tagging failed; inspect worker logs for details", traceparent)
+                                    r.xack(AUTO_TAG_STREAM_NAME, GROUP_NAME, message_id)
+                                finally:
+                                    lease.stop()
+                            except Exception as exc:
+                                logger.error(f"[task:{task_id_str}] auto-tag task failed: {exc}", exc_info=True)
+                                try:
+                                    _fail_async_task(task_id_str, worker_name, str(exc), traceparent)
+                                    r.xack(AUTO_TAG_STREAM_NAME, GROUP_NAME, message_id)
+                                except Exception:
+                                    pass
+                        else:
+                            if photo_id and minio_path:
+                                process_auto_tag_task(minio_client, photo_id, minio_path, traceparent)
+                            r.xack(AUTO_TAG_STREAM_NAME, GROUP_NAME, message_id)
 
         except Exception as e:
             logger.error(f"Worker {worker_id} error: {e}")
