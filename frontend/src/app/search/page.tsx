@@ -582,7 +582,7 @@ export default function SearchPage() {
                     src={
                       photo.ThumbnailURL ||
                       `${PROXY}?path=${encodeURIComponent(
-                        photo.MinioPath.replace("raw/", "thumbnail/").replace(/\.[^.]+$/, ".webp")
+                        photo.MinioPath.replace("raw/", "thumb/").replace(/\.[^.]+$/, ".webp")
                       )}`
                     }
                     alt={photo.OriginalFilename}

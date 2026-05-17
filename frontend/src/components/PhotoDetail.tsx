@@ -190,8 +190,8 @@ export default function PhotoDetail({ photo: initialPhoto, isFavorited: initialF
           return was;
         });
       }, 120000);
-    } catch (error: any) {
-      setInferError(error.message);
+    } catch (error: unknown) {
+      setInferError(error instanceof Error ? error.message : "Failed to infer parameters");
       setIsInferring(false);
     }
   };
@@ -241,8 +241,8 @@ export default function PhotoDetail({ photo: initialPhoto, isFavorited: initialF
         });
       }, 120000);
       
-    } catch (error: any) {
-      setAnalysisError(error.message);
+    } catch (error: unknown) {
+      setAnalysisError(error instanceof Error ? error.message : "Failed to analyze photo");
       setIsAnalyzing(false);
     }
   };

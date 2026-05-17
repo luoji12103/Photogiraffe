@@ -48,7 +48,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function BackupPage() {
-  const { user } = useAuth();
+  const { authFetch, user } = useAuth();
   const { addToast } = useToast();
 
   const [jobs, setJobs] = useState<BackupJob[]>([]);
@@ -57,7 +57,7 @@ export default function BackupPage() {
 
   const fetchJobs = useCallback(async () => {
     try {
-      const res = await fetch("/api/backup");
+      const res = await authFetch("/api/backup");
       if (!res.ok) throw new Error("failed");
       setJobs(await res.json());
     } catch {
@@ -65,7 +65,7 @@ export default function BackupPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, authFetch]);
 
   useEffect(() => {
     fetchJobs();
@@ -79,7 +79,7 @@ export default function BackupPage() {
   const triggerBackup = async () => {
     setTriggering(true);
     try {
-      const res = await fetch("/api/backup", { method: "POST" });
+      const res = await authFetch("/api/backup", { method: "POST" });
       const data = await res.json();
       if (res.status === 409) {
         addToast({ type: "error", title: "已有备份任务正在进行中" });
@@ -98,7 +98,7 @@ export default function BackupPage() {
   const deleteJob = async (id: number) => {
     if (!confirm("确认删除此备份记录？")) return;
     try {
-      const res = await fetch(`/api/backup/${id}`, { method: "DELETE" });
+      const res = await authFetch(`/api/backup/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("删除失败");
       addToast({ type: "success", title: "已删除" });
       fetchJobs();
@@ -109,7 +109,7 @@ export default function BackupPage() {
 
   const downloadJob = async (id: number) => {
     try {
-      const res = await fetch(`/api/backup/${id}`);
+      const res = await authFetch(`/api/backup/${id}`);
       if (!res.ok) throw new Error("failed");
       const data: BackupJob & { download_url?: string } = await res.json();
       if (data.download_url) {

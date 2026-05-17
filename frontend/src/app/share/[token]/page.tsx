@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import { Aperture, Camera, Clock, MapPin, Share2, AlertCircle } from "lucide-react";
 
 interface ExifData {
@@ -86,10 +87,10 @@ export default function SharePage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       {/* Minimal header */}
       <header className="fixed top-0 left-0 right-0 z-40 h-12 flex items-center justify-between px-4 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/50">
-        <a href="/" className="flex items-center gap-2 text-zinc-400 hover:text-zinc-200 transition-colors">
+        <Link href="/" className="flex items-center gap-2 text-zinc-400 hover:text-zinc-200 transition-colors">
           <Aperture className="w-5 h-5" />
           <span className="text-sm font-medium">Photogiraffe</span>
-        </a>
+        </Link>
         <button
           onClick={handleCopyLink}
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
@@ -169,9 +170,9 @@ export default function SharePage() {
 
           <p className="mt-8 text-xs text-zinc-600 text-center">
             Shared via{" "}
-            <a href="/" className="text-zinc-500 hover:text-zinc-300 transition-colors">
+            <Link href="/" className="text-zinc-500 hover:text-zinc-300 transition-colors">
               Photogiraffe
-            </a>
+            </Link>
           </p>
         </div>
       </div>

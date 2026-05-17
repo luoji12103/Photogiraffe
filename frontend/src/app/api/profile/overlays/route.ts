@@ -6,7 +6,8 @@ export async function GET(req: NextRequest) {
   try {
     const res = await fetch(`${INTERNAL_API}/api/profile/overlays`, {
       cache: "no-store",
-      headers: { Authorization: req.headers.get("Authorization") ?? "" },
+      headers: { Authorization: req.headers.get("Authorization") ?? "",
+        "X-Csrf-Token": req.headers.get("X-Csrf-Token") ?? "" },
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });

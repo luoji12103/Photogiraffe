@@ -13,6 +13,7 @@ export async function POST(
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
     });
 

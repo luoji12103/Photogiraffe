@@ -5,7 +5,8 @@ const API = process.env.INTERNAL_API_URL || "http://go-core:8080";
 export async function GET(request: NextRequest) {
   try {
     const res = await fetch(`${API}/api/profile`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();
@@ -24,6 +25,7 @@ export async function PUT(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: JSON.stringify(body),
     });

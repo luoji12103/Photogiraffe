@@ -49,7 +49,7 @@ function ruleParamsPlaceholder(ruleType: string): string {
 
 export default function SmartAlbumsPage() {
   const { addToast } = useToast();
-  const { user } = useAuth();
+  const { authFetch, user } = useAuth();
 
   const [albums, setAlbums] = useState<SmartAlbum[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +72,7 @@ export default function SmartAlbumsPage() {
   const fetchAlbums = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/smart-albums");
+      const res = await authFetch("/api/smart-albums");
       if (!res.ok) throw new Error("failed");
       setAlbums(await res.json());
     } catch {
@@ -80,7 +80,7 @@ export default function SmartAlbumsPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, authFetch]);
 
   useEffect(() => {
     fetchAlbums();
@@ -100,7 +100,7 @@ export default function SmartAlbumsPage() {
 
     setCreating(true);
     try {
-      const res = await fetch("/api/smart-albums", {
+      const res = await authFetch("/api/smart-albums", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, rule_type: ruleType, rule_params: ruleParams }),
@@ -125,7 +125,7 @@ export default function SmartAlbumsPage() {
   const handleDelete = async (album: SmartAlbum) => {
     if (!confirm(`确认删除智能相册「${album.Name}」？`)) return;
     try {
-      const res = await fetch(`/api/smart-albums/${album.ID}`, { method: "DELETE" });
+      const res = await authFetch(`/api/smart-albums/${album.ID}`, { method: "DELETE" });
       if (!res.ok) throw new Error("删除失败");
       addToast({ type: "success", title: "已删除" });
       if (selectedAlbum?.ID === album.ID) setSelectedAlbum(null);
@@ -139,7 +139,7 @@ export default function SmartAlbumsPage() {
     async (album: SmartAlbum, page = 1) => {
       setLoadingPhotos(true);
       try {
-        const res = await fetch(`/api/smart-albums/${album.ID}/photos?page=${page}&limit=20`);
+        const res = await authFetch(`/api/smart-albums/${album.ID}/photos?page=${page}&limit=20`);
         if (!res.ok) throw new Error("failed");
         const data = await res.json();
         setPhotos(data.photos ?? []);
@@ -152,7 +152,7 @@ export default function SmartAlbumsPage() {
         setLoadingPhotos(false);
       }
     },
-    [addToast]
+    [addToast, authFetch]
   );
 
   const openAlbum = (album: SmartAlbum) => {

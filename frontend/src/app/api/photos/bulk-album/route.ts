@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         Authorization: req.headers.get("Authorization") ?? "",
+        "X-Csrf-Token": req.headers.get("X-Csrf-Token") ?? "",
       },
       body,
     });

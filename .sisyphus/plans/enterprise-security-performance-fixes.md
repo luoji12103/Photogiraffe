@@ -1605,7 +1605,7 @@ Max Concurrent: 5 (Waves 1-4)
 
   **Commit**: NO
 
-- [ ] F2. Load Testing (100 Concurrent Users)
+- [x] F2. Load Testing (100 Concurrent Users)
 
   **What to do**:
   - Use Apache Bench or k6 for load testing

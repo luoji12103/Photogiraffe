@@ -8,7 +8,8 @@ export async function GET(
 ) {
   const { job_id } = await params;
   const res = await fetch(`${BASE}/api/exports/${job_id}`, {
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     cache: "no-store",
   });
   const data = await res.json();
@@ -22,7 +23,8 @@ export async function DELETE(
   const { job_id } = await params;
   const res = await fetch(`${BASE}/api/exports/${job_id}`, {
     method: "DELETE",
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     cache: "no-store",
   });
   const data = await res.json();

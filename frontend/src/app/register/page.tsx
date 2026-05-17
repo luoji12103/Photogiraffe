@@ -18,6 +18,8 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const getErrorMessage = (err: unknown) => err instanceof Error ? err.message : "Registration failed";
+
   useEffect(() => {
     fetch("/api/feature/require_invite")
       .then((r) => r.json())
@@ -32,8 +34,8 @@ export default function RegisterPage() {
     try {
       await register(username, email, password, requireInvite ? inviteCode : undefined);
       router.replace("/");
-    } catch (err: any) {
-      setError(err.message || "Registration failed");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -142,4 +144,3 @@ export default function RegisterPage() {
     </div>
   );
 }
-

@@ -1,13 +1,10 @@
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 
-const GO_CORE = process.env.GO_CORE_URL ?? process.env.INTERNAL_API_URL ?? "http://go-core:8080";
+import { GO_CORE_URL, buildProxyHeaders } from "@/app/api/_utils/proxy";
 
-export async function GET() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value ?? "";
-  const res = await fetch(`${GO_CORE}/api/storage/usage`, {
-    headers: { Authorization: `Bearer ${token}` },
+export async function GET(req: NextRequest) {
+  const res = await fetch(`${GO_CORE_URL}/api/storage/usage`, {
+    headers: buildProxyHeaders(req),
   });
   return NextResponse.json(await res.json(), { status: res.status });
 }

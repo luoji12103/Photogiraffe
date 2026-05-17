@@ -59,6 +59,30 @@ export default function SSEListener() {
       } catch {}
     });
 
+    /** Backup job completed */
+    es.addEventListener("backup_completed", (e) => {
+      try {
+        const d = JSON.parse(e.data) as { job_id: number };
+        addToast({
+          type: "success",
+          title: "备份已完成",
+          message: `备份任务 #${d.job_id} 已生成，可前往下载。`,
+        });
+      } catch {}
+    });
+
+    /** Backup job failed */
+    es.addEventListener("backup_failed", (e) => {
+      try {
+        const d = JSON.parse(e.data) as { job_id: number; error_message?: string };
+        addToast({
+          type: "error",
+          title: "备份失败",
+          message: d.error_message || `备份任务 #${d.job_id} 失败，请重试。`,
+        });
+      } catch {}
+    });
+
     /** AI analysis done */
     es.addEventListener("ai_analysis_done", (e) => {
       try {

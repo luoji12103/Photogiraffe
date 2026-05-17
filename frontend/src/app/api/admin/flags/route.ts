@@ -5,7 +5,8 @@ export async function GET(request: NextRequest) {
 
   const res = await fetch(`${internalApiUrl}/api/admin/flags`, {
     cache: "no-store",
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });

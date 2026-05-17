@@ -16,6 +16,7 @@ export async function POST(
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: JSON.stringify(body),
     });
@@ -43,7 +44,8 @@ export async function GET(
 
   try {
     const res = await fetch(`${internalApiUrl}/api/photos/${id}/exports`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();

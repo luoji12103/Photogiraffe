@@ -134,7 +134,7 @@ function ChartSection({
 }
 
 export default function AnalyticsPage() {
-  const { user } = useAuth();
+  const { authFetch, user } = useAuth();
   const { addToast } = useToast();
 
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -152,7 +152,7 @@ export default function AnalyticsPage() {
   const fetchStat = useCallback(
     async (type: string): Promise<DataRow[] | Summary | null> => {
       try {
-        const res = await fetch(`/api/analytics?type=${type}`);
+        const res = await authFetch(`/api/analytics?type=${type}`);
         if (!res.ok) throw new Error("failed");
         return await res.json();
       } catch {
@@ -160,7 +160,7 @@ export default function AnalyticsPage() {
         return null;
       }
     },
-    [addToast]
+    [addToast, authFetch]
   );
 
   useEffect(() => {

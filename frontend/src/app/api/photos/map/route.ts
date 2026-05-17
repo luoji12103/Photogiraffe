@@ -4,7 +4,8 @@ export async function GET(request: NextRequest) {
   const internalApiUrl = process.env.INTERNAL_API_URL || "http://go-core:8080";
   try {
     const res = await fetch(`${internalApiUrl}/api/photos/map`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();

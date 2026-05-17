@@ -1,37 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
-const GO_CORE = process.env.GO_CORE_URL ?? process.env.INTERNAL_API_URL ?? "http://go-core:8080";
+import { GO_CORE_URL, buildProxyHeaders } from "@/app/api/_utils/proxy";
 
-async function getToken() {
-  const cookieStore = await cookies();
-  return cookieStore.get("token")?.value ?? "";
-}
+type Params = { params: Promise<{ id: string }> };
 
-/** PUT /api/notifications/[id] — mark as read */
-export async function PUT(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(req: NextRequest, { params }: Params) {
   const { id } = await params;
-  const token = await getToken();
-  const res = await fetch(`${GO_CORE}/api/notifications/${id}/read`, {
+  const res = await fetch(`${GO_CORE_URL}/api/notifications/${id}`, {
     method: "PUT",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: buildProxyHeaders(req),
   });
   return NextResponse.json(await res.json(), { status: res.status });
 }
 
-/** DELETE /api/notifications/[id] — delete notification */
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, { params }: Params) {
   const { id } = await params;
-  const token = await getToken();
-  const res = await fetch(`${GO_CORE}/api/notifications/${id}`, {
+  const res = await fetch(`${GO_CORE_URL}/api/notifications/${id}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: buildProxyHeaders(req),
   });
   return NextResponse.json(await res.json(), { status: res.status });
 }

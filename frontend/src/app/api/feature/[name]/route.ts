@@ -13,6 +13,7 @@ export async function GET(
       headers: {
         // This endpoint is public-readable (no JWT needed)
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
     });
 

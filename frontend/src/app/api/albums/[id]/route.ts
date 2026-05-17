@@ -6,7 +6,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   try {
     const res = await fetch(`${API}/api/albums/${id}`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();
@@ -26,6 +27,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: JSON.stringify(body),
     });
@@ -42,7 +44,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const res = await fetch(`${API}/api/albums/${id}`, {
       method: "DELETE",
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     });
     const data = await res.json();
     if (!res.ok) return NextResponse.json({ error: data.error || "failed" }, { status: res.status });

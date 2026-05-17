@@ -15,6 +15,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const getErrorMessage = (err: unknown) => err instanceof Error ? err.message : "Login failed";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -22,8 +24,8 @@ export default function LoginPage() {
     try {
       await login(username, password);
       router.replace("/");
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }

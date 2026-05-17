@@ -9,7 +9,7 @@ import AuthGuard from "@/components/AuthGuard";
 import ToastContainer from "@/components/ToastContainer";
 import SSEListener from "@/components/SSEListener";
 import Link from "next/link";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   Aperture, LogOut, Settings, Shield, MapPin, Images,
   UserCircle, Search, LayoutDashboard, Sun, Moon, Monitor,
@@ -383,13 +383,9 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user } = useAuth();
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-  const [collapsed, setCollapsed] = useState(false);
-
-  // Persist sidebar state
-  useEffect(() => {
-    const stored = localStorage.getItem("pg-sidebar-collapsed");
-    if (stored === "true") setCollapsed(true);
-  }, []);
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("pg-sidebar-collapsed") === "true"
+  );
 
   const toggleSidebar = useCallback(() => {
     setCollapsed((prev) => {

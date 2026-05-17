@@ -12,6 +12,7 @@ export async function GET(
       cache: "no-store",
       headers: {
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
     });
 

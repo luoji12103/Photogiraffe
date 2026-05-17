@@ -18,7 +18,9 @@ interface Notification {
 const TYPE_LABEL: Record<string, { label: string; color: string }> = {
   ai_done:     { label: "AI", color: "bg-violet-500/20 text-violet-300 border-violet-500/30" },
   export_done: { label: "导出", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
+  export_failed: { label: "导出失败", color: "bg-red-500/20 text-red-300 border-red-500/30" },
   backup_done: { label: "备份", color: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
+  backup_failed: { label: "备份失败", color: "bg-red-500/20 text-red-300 border-red-500/30" },
   info:        { label: "通知", color: "bg-zinc-700/40 text-zinc-300 border-zinc-600/30" },
 };
 
@@ -34,7 +36,6 @@ export default function NotificationsPage() {
 
   const loadPage = useCallback(
     (p: number, unreadFilter: boolean) => {
-      setLoading(true);
       authFetch(`/api/notifications?page=${p}&limit=${LIMIT}${unreadFilter ? "&unread_only=true" : ""}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
@@ -113,7 +114,11 @@ export default function NotificationsPage() {
                 <input
                   type="checkbox"
                   checked={unreadOnly}
-                  onChange={(e) => { setUnreadOnly(e.target.checked); setPage(1); }}
+                  onChange={(e) => {
+                    setLoading(true);
+                    setUnreadOnly(e.target.checked);
+                    setPage(1);
+                  }}
                   className="accent-blue-500"
                 />
                 仅未读
@@ -208,7 +213,10 @@ export default function NotificationsPage() {
             <div className="flex justify-center gap-2 mt-8">
               <button
                 disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
+                onClick={() => {
+                  setLoading(true);
+                  setPage((p) => p - 1);
+                }}
                 className="px-3 py-1.5 rounded-lg text-sm disabled:opacity-40 transition-colors"
                 style={{ background: "var(--pg-bg-elevated)", color: "var(--pg-text-muted)" }}
               >
@@ -219,7 +227,10 @@ export default function NotificationsPage() {
               </span>
               <button
                 disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => {
+                  setLoading(true);
+                  setPage((p) => p + 1);
+                }}
                 className="px-3 py-1.5 rounded-lg text-sm disabled:opacity-40 transition-colors"
                 style={{ background: "var(--pg-bg-elevated)", color: "var(--pg-text-muted)" }}
               >

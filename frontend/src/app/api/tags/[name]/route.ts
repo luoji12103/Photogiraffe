@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
-const GO_CORE = process.env.GO_CORE_URL ?? process.env.INTERNAL_API_URL ?? "http://go-core:8080";
+import { GO_CORE_URL, buildProxyHeaders } from "@/app/api/_utils/proxy";
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params;
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value ?? "";
-  const res = await fetch(`${GO_CORE}/api/tags/${encodeURIComponent(name)}`, {
+  const res = await fetch(`${GO_CORE_URL}/api/tags/${encodeURIComponent(name)}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: buildProxyHeaders(req),
   });
   return NextResponse.json(await res.json(), { status: res.status });
 }

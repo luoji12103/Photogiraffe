@@ -83,6 +83,16 @@ docker compose up -d
 - **前端**: http://localhost:3000
 - **MinIO 控制台**: http://localhost:9001（用户名/密码见 `.env` 中的 `MINIO_USER` / `MINIO_PASSWORD`）
 
+### 生产部署
+
+仓库现在额外提供了一个更偏生产用途的 Compose 文件：
+
+```bash
+docker compose -f docker-compose.production.yml up -d --build
+```
+
+它默认只公开 nginx，并把 MinIO 控制台、Prometheus、Jaeger 限制在 `127.0.0.1`。更完整的运维说明见 [docs/production.md](/root/code/Photogiraffe/docs/production.md)。
+
 ### 4. 注册第一个用户（SuperAdmin）
 
 打开 http://localhost:3000，会自动跳转到注册页。
@@ -213,6 +223,9 @@ CORS_ALLOW_ORIGIN=http://localhost:3000
 # 启动所有服务（后台）
 docker compose up -d
 
+# 启动生产配置
+docker compose -f docker-compose.production.yml up -d --build
+
 # 查看日志
 docker compose logs -f go-core
 docker compose logs -f frontend
@@ -229,6 +242,14 @@ docker compose down
 
 # 完全重置（⚠ 删除所有数据）
 docker compose down -v
+```
+
+## 质量检查
+
+```bash
+cd go-core && go test ./...
+cd frontend && npm run lint && npm run typecheck
+python -m py_compile python-worker/main.py test_exif.py tests/integration_test.py
 ```
 
 ---

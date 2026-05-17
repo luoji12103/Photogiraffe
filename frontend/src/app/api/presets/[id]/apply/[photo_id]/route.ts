@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildProxyHeaders } from "@/app/api/_utils/proxy";
 
 const API = process.env.INTERNAL_API_URL || "http://go-core:8080";
 
@@ -10,7 +11,7 @@ export async function POST(
   try {
     const res = await fetch(`${API}/api/presets/${id}/apply/${photo_id}`, {
       method: "POST",
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: buildProxyHeaders(request),
     });
     const data = await res.json();
     if (!res.ok) return NextResponse.json({ error: data.error || "failed" }, { status: res.status });

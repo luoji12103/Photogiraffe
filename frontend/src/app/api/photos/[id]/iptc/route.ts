@@ -1,15 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-const GO_CORE = process.env.NEXT_PUBLIC_API_URL ?? "http://go-core:8080";
+import { GO_CORE_URL, buildProxyHeaders } from "@/app/api/_utils/proxy";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const auth = req.headers.get("Authorization") ?? "";
-  const res = await fetch(`${GO_CORE}/api/photos/${id}/iptc`, {
-    headers: { Authorization: auth },
+  const res = await fetch(`${GO_CORE_URL}/api/photos/${id}/iptc`, {
+    headers: buildProxyHeaders(req),
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });
@@ -20,12 +19,11 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const auth = req.headers.get("Authorization") ?? "";
-  const body = await req.json();
-  const res = await fetch(`${GO_CORE}/api/photos/${id}/iptc`, {
+  const body = await req.text();
+  const res = await fetch(`${GO_CORE_URL}/api/photos/${id}/iptc`, {
     method: "PUT",
-    headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: buildProxyHeaders(req, { "Content-Type": "application/json" }),
+    body,
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });

@@ -36,19 +36,24 @@ export default function PublicPortfolioPage() {
 
   useEffect(() => {
     if (!username) return;
-    setLoading(true);
+    let cancelled = false;
     fetch(`/api/public/profile/${encodeURIComponent(username)}`)
       .then((r) => {
         if (r.status === 404) {
-          setNotFound(true);
+          if (!cancelled) setNotFound(true);
           return null;
         }
         return r.json();
       })
       .then((data: PublicProfile | null) => {
-        if (data) setProfile(data);
+        if (!cancelled && data) setProfile(data);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [username]);
 
   if (loading) {

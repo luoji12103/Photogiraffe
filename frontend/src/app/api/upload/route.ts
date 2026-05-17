@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: formData,
     });

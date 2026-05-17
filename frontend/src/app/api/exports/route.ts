@@ -12,7 +12,8 @@ export async function GET(request: NextRequest) {
   if (status) params.set("status", status);
 
   const res = await fetch(`${BASE}/api/exports?${params.toString()}`, {
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     cache: "no-store",
   });
   const data = await res.json();

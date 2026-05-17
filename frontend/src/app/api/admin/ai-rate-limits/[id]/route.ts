@@ -13,6 +13,7 @@ export async function PUT(
     cache: "no-store",
     headers: {
       Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       "Content-Type": "application/json",
     },
     body,
@@ -29,7 +30,8 @@ export async function DELETE(
   const res = await fetch(`${BASE}/api/admin/ai-rate-limits/${id}`, {
     method: "DELETE",
     cache: "no-store",
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildProxyHeaders } from "@/app/api/_utils/proxy";
 
 const INTERNAL = process.env.INTERNAL_API_URL || "http://go-core:8080";
 
@@ -10,7 +11,7 @@ export async function DELETE(
   const res = await fetch(`${INTERNAL}/api/photos/${id}/share/${token}`, {
     method: "DELETE",
     cache: "no-store",
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: buildProxyHeaders(request),
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });

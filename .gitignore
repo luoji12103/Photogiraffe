@@ -1,24 +1,47 @@
-# Environment variables (contains secrets — never commit)
+# Environment variables (contains secrets - never commit)
 .env
 .env.local
 .env.*.local
+*.env
+*.env.local
 
 # Go build artifacts
 go-core/main
+go-core/core
 go-core/*.exe
+go-core/*.out
+coverage.out
+*.test
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Node.js
 node_modules/
 frontend/.next/
 frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/*.tsbuildinfo
 
 # Docker
 *.log
 
 # Local JWT RSA keys (never commit)
 go-core/keys/*.pem
+go-core/keys/*.key
+
+# Local agent/tooling state
+.agent/
+.agents/
+.claude/
+skills-lock.json
+worktrees/

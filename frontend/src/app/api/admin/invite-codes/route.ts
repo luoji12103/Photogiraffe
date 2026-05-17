@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
       cache: "no-store",
       headers: {
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
     });
     const data = await res.json();
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: body || "{}",
     });

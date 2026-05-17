@@ -14,6 +14,7 @@ export async function PUT(
       headers: {
         "Content-Type": "application/json",
         Authorization: req.headers.get("Authorization") ?? "",
+        "X-Csrf-Token": req.headers.get("X-Csrf-Token") ?? "",
       },
       body,
     });

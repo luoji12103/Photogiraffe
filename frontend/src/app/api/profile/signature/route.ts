@@ -7,7 +7,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const res = await fetch(`${API}/api/profile/signature`, {
       method: "POST",
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       body: formData,
     });
     const data = await res.json();

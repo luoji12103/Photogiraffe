@@ -27,7 +27,6 @@ export default function FavoritesPage() {
 
   const loadPage = useCallback(
     (p: number) => {
-      setLoading(true);
       authFetch(`/api/photos/favorites?page=${p}&limit=${LIMIT}`)
         .then((res) => (res.ok ? res.json() : { photos: [], total: 0, total_pages: 1 }))
         .then((data) => {
@@ -137,7 +136,10 @@ export default function FavoritesPage() {
                 <div className="flex items-center justify-center gap-2 mt-8">
                   <button
                     disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
+                    onClick={() => {
+                      setLoading(true);
+                      setPage((p) => p - 1);
+                    }}
                     className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-40 transition-colors"
                     style={{ background: "var(--pg-bg-elevated)", color: "var(--pg-text-primary)" }}
                   >
@@ -148,7 +150,10 @@ export default function FavoritesPage() {
                   </span>
                   <button
                     disabled={page >= totalPages}
-                    onClick={() => setPage((p) => p + 1)}
+                    onClick={() => {
+                      setLoading(true);
+                      setPage((p) => p + 1);
+                    }}
                     className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-40 transition-colors"
                     style={{ background: "var(--pg-bg-elevated)", color: "var(--pg-text-primary)" }}
                   >

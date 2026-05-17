@@ -10,7 +10,8 @@ export async function GET(
 
   try {
     const res = await fetch(`${internalApiUrl}/api/exports/${job_id}/download`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();

@@ -12,6 +12,7 @@ export async function PUT(
     method: "PUT",
     headers: {
       Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       "Content-Type": "application/json",
     },
     body,

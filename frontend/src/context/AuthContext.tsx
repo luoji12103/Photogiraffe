@@ -41,10 +41,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     csrfToken: null,
     isLoading: true,
   });
-  const tokenRef = useRef<string | null>(null);
-  const csrfTokenRef = useRef<string | null>(null);
-  tokenRef.current = state.accessToken;
-  csrfTokenRef.current = state.csrfToken;
+  const tokenRef = useRef<string | null>(state.accessToken);
+  const csrfTokenRef = useRef<string | null>(state.csrfToken);
+
+  useEffect(() => {
+    tokenRef.current = state.accessToken;
+    csrfTokenRef.current = state.csrfToken;
+  }, [state.accessToken, state.csrfToken]);
 
   const fetchCsrfToken = useCallback(async (accessToken: string): Promise<string | null> => {
     try {
@@ -110,7 +113,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const headers = new Headers(init.headers ?? {});
       if (tokenRef.current) headers.set("Authorization", `Bearer ${tokenRef.current}`);
       const method = (init.method ?? "GET").toUpperCase();
-      if ((method === "POST" || method === "PUT" || method === "DELETE") && csrfTokenRef.current) {
+      const needsCsrf = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+      if (needsCsrf && csrfTokenRef.current) {
         headers.set("X-Csrf-Token", csrfTokenRef.current);
       }
 
@@ -119,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const newToken = await silentRefresh();
         if (newToken) {
           headers.set("Authorization", `Bearer ${newToken}`);
-          if (csrfTokenRef.current && (method === "POST" || method === "PUT" || method === "DELETE")) {
+          if (csrfTokenRef.current && needsCsrf) {
             headers.set("X-Csrf-Token", csrfTokenRef.current);
           }
           res = await fetch(input, { ...init, headers });

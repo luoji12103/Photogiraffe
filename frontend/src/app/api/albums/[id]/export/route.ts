@@ -14,6 +14,7 @@ export async function POST(
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: JSON.stringify(body),
     });
@@ -32,7 +33,8 @@ export async function GET(
   const { id } = await params;
   try {
     const res = await fetch(`${API}/api/albums/${id}/exports`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     });
     const data = await res.json();
     if (!res.ok) return NextResponse.json({ error: data.error || "failed" }, { status: res.status });

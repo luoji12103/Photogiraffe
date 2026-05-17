@@ -6,7 +6,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   try {
     const res = await fetch(`${API}/api/presets/${id}/file`, {
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
       cache: "no-store",
     });
     const data = await res.json();
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       method: "POST",
       headers: {
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
         ...(csrfToken ? { "X-Csrf-Token": csrfToken } : {}),
         ...(cookie ? { Cookie: cookie } : {}),
       },

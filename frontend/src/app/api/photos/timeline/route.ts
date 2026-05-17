@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const INTERNAL_API_URL = process.env.INTERNAL_API_URL || "http://go-core:8080";
+import { GO_CORE_URL, buildProxyHeaders } from "@/app/api/_utils/proxy";
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("Authorization") || "";
-    const res = await fetch(`${INTERNAL_API_URL}/api/photos/timeline`, {
-      headers: { Authorization: authHeader },
+    const res = await fetch(`${GO_CORE_URL}/api/photos/timeline`, {
+      headers: buildProxyHeaders(request),
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });

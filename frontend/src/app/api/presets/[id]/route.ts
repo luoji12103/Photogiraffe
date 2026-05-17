@@ -11,6 +11,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       headers: {
         "Content-Type": "application/json",
         Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       },
       body: JSON.stringify(body),
     });
@@ -27,7 +28,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const res = await fetch(`${API}/api/presets/${id}`, {
       method: "DELETE",
-      headers: { Authorization: request.headers.get("Authorization") || "" },
+      headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
     });
     const data = await res.json();
     if (!res.ok) return NextResponse.json({ error: data.error || "Failed to delete preset" }, { status: res.status });

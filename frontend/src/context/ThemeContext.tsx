@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 type Theme = "light" | "dark" | "system";
 
@@ -33,35 +33,30 @@ function resolveTheme(theme: Theme): "light" | "dark" {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
-  const [resolved, setResolved] = useState<"light" | "dark">("dark");
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "dark";
+    const stored = localStorage.getItem("pg-theme");
+    return stored === "light" || stored === "dark" || stored === "system" ? stored : "dark";
+  });
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() => getSystemTheme());
+  const resolved = useMemo<"light" | "dark">(
+    () => (theme === "system" ? systemTheme : theme),
+    [systemTheme, theme]
+  );
 
-  // Hydrate from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem("pg-theme") as Theme | null;
-    const t = stored && ["light", "dark", "system"].includes(stored) ? stored : "dark";
-    setThemeState(t);
-    setResolved(resolveTheme(t));
-  }, []);
-
-  // Apply class to <html>
-  useEffect(() => {
-    const r = resolveTheme(theme);
-    setResolved(r);
-    const root = document.documentElement;
-    root.classList.remove("light", "dark");
-    root.classList.add(r);
-    root.style.colorScheme = r;
-  }, [theme]);
-
-  // Listen for system preference changes
-  useEffect(() => {
-    if (theme !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => setResolved(getSystemTheme());
+    const handler = () => setSystemTheme(getSystemTheme());
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, [theme]);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(resolved);
+    root.style.colorScheme = resolved;
+  }, [resolved]);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);

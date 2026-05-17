@@ -9,7 +9,8 @@ export async function GET(
   const { id } = await params;
   const res = await fetch(`${INTERNAL}/api/photos/${id}/share`, {
     cache: "no-store",
-    headers: { Authorization: request.headers.get("Authorization") || "" },
+    headers: { Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "" },
   });
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });
@@ -26,6 +27,7 @@ export async function POST(
     cache: "no-store",
     headers: {
       Authorization: request.headers.get("Authorization") || "",
+        "X-Csrf-Token": request.headers.get("X-Csrf-Token") || "",
       "Content-Type": "application/json",
     },
     body: body || "{}",
