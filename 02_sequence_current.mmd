@@ -1,0 +1,45 @@
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant FE as Next.js API Proxy
+    participant API as Go Core
+    participant R as Redis Streams
+    participant W as Python Worker
+    participant M as MinIO
+    participant DB as PostgreSQL
+
+    B->>FE: POST /api/upload (multipart + JWT)
+    FE->>API: POST /upload
+    API->>M: PutObject photos/raw/{uuid}.{ext}
+    API->>DB: INSERT photos(status=processing,user_id,...)
+    API->>R: XADD image_processing_queue(photo_id,minio_path)
+    API-->>B: 201 queued
+
+    W->>R: XREADGROUP image_processing_queue
+    W->>M: GET photos/raw/{...}
+    W->>W: decode/EXIF/thumbnail/proxy
+    W->>M: PUT photos/proxy/{...}.webp
+    W->>M: PUT photos/thumb/{...}.webp
+    W->>API: PUT /internal/photos/:id/status + exif_data
+    API->>DB: UPDATE photos.status + UPSERT exif_data
+    W->>R: XACK image_processing_queue
+
+    B->>FE: POST /api/photos/:id/analyze
+    FE->>API: POST /api/photos/:id/analyze
+    API->>R: XADD ai_analysis_queue(provider,api_key,model,...)
+    W->>R: XREADGROUP ai_analysis_queue
+    W->>M: GET photos/proxy/{...}.webp
+    W->>API: PUT /internal/photos/:id/analysis
+    API->>DB: UPDATE photos.ai_analysis
+    W->>R: XACK ai_analysis_queue
+
+    B->>FE: POST /api/photos/:id/export
+    FE->>API: POST /api/photos/:id/export
+    API->>DB: INSERT export_jobs(status=pending)
+    API->>R: XADD export_queue(job_id,photo_id,export_options)
+    W->>R: XREADGROUP export_queue
+    W->>M: GET photos/raw/{...}
+    W->>M: PUT photos/exports/{...}
+    W->>API: PUT /internal/exports/:job_id/status(completed,output_path)
+    API->>DB: UPDATE export_jobs
+    W->>R: XACK export_queue
