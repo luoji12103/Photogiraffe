@@ -1,0 +1,59 @@
+flowchart TB
+    subgraph Edge[Edge Layer]
+      CDN[CDN/WAF]
+      APIGW[API Gateway]
+    end
+
+    subgraph App[Application Layer]
+      FE[Next.js Frontend]
+      AUTH[Auth Service]
+      CORE[Photo Core Service]
+      BILL[Billing & Metering]
+      AUDIT[Audit Service]
+      NOTIF[Notification Service]
+    end
+
+    subgraph Async[Async Processing]
+      BUS[(Event Bus / Redis Streams/Kafka)]
+      WORK[Image/AI Worker Pool]
+      DLQ[(Dead Letter Queue)]
+      SCHED[Retry/Replayer]
+    end
+
+    subgraph Data[Data Layer]
+      PG[(PostgreSQL - tenant scoped)]
+      REDIS[(Redis - cache/rate limit)]
+      OBJ[(Object Storage - tenant namespace)]
+      OBS[(Observability Stack)]
+    end
+
+    CDN --> FE
+    FE --> APIGW
+    APIGW --> AUTH
+    APIGW --> CORE
+    APIGW --> BILL
+
+    AUTH --> PG
+    CORE --> PG
+    CORE --> OBJ
+    CORE --> REDIS
+    CORE --> BUS
+
+    BUS --> WORK
+    WORK --> OBJ
+    WORK --> CORE
+    WORK --> BUS
+    BUS --> DLQ
+    SCHED --> BUS
+    SCHED --> DLQ
+
+    CORE --> AUDIT
+    BILL --> PG
+    CORE --> NOTIF
+
+    APIGW --> OBS
+    CORE --> OBS
+    WORK --> OBS
+
+    classDef p0 fill:#ffe5e5,stroke:#c00,stroke-width:1px;
+    class AUTH,APIGW,BUS,DLQ p0;
