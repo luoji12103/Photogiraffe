@@ -1,0 +1,14 @@
+{
+  "active_plan": "/root/code/Photogiraffe/.sisyphus/plans/system-wide-validation.md",
+  "started_at": "2026-03-14T08:36:36.355Z",
+  "session_ids": [
+    "ses_32d80cbc1ffeUsNaYrzBBhNUc1",
+    "ses_2e64e5db5ffetIDzFNIdSAaAhg",
+    "ses_2e64e57fbffegMkH7K9SCNxQBm",
+    "ses_2e49bb997ffedpeSmMWwmcf1e0",
+    "ses_2e49b97bcffeyuFSyjLNnn9M0W"
+  ],
+  "plan_name": "system-wide-validation",
+  "agent": "sisyphus",
+  "worktree_path": "/root/code/Photogiraffe/worktrees/validate_temp"
+}

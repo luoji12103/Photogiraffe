@@ -1,3 +1,16 @@
 redis
 minio
 pillow
+requests
+pillow-heif
+exifread
+rawpy
+numpy
+piexif
+openai
+google-genai
+anthropic
+opencv-python-headless
+zhipuai
+fpdf2
+imagehash

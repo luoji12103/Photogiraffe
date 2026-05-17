@@ -6,10 +6,10 @@ services:
     container_name: photogiraffe-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
       POSTGRES_DB: ${DB_NAME:-photogiraffe}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -17,9 +17,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: photogiraffe-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:-redispass}
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     restart: unless-stopped
@@ -28,11 +28,10 @@ services:
     image: minio/minio
     container_name: photogiraffe-minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-admin12345}
+      MINIO_ROOT_USER: ${MINIO_USER:?MINIO_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
       - "9001:9001"
     volumes:
       - miniodata:/data
@@ -43,21 +42,31 @@ services:
       context: ./go-core
     container_name: photogiraffe-go-core
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - DB_HOST=postgres
       - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - DB_NAME=${DB_NAME:-photogiraffe}
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
-      - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
+      - MINIO_ACCESS_KEY=${MINIO_USER:?MINIO_USER must be set}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
+      - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
     depends_on:
       - postgres
       - redis
       - minio
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   python-worker:
@@ -66,16 +75,80 @@ services:
     container_name: photogiraffe-python-worker
     environment:
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_USER:-admin}
-      - MINIO_SECRET_KEY=${MINIO_PASSWORD:-admin12345}
+      - MINIO_ACCESS_KEY=${MINIO_USER:?MINIO_USER must be set}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:?INTERNAL_SECRET must be set}
     depends_on:
       - redis
       - minio
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,redis; r=redis.Redis(host=os.getenv('REDIS_HOST','redis'), port=6379, password=os.getenv('REDIS_PASSWORD')); r.ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - python-worker-cache:/root/.cache
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - INTERNAL_API_URL=http://go-core:8080
+    container_name: photogiraffe-frontend
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_MINIO_URL=http://localhost:9000
+      - INTERNAL_API_URL=http://go-core:8080
+      - MINIO_INTERNAL_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_USER:?MINIO_USER must be set}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
+    depends_on:
+      - go-core
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: photogiraffe-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - go-core
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: photogiraffe-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./outline/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - go-core
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: photogiraffe-jaeger
+    ports:
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
   miniodata:
+  python-worker-cache:
